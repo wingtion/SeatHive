@@ -1,0 +1,17 @@
+bin/
+obj/
+.vs/
+.idea/
+*.user
+*.suo
+appsettings.Development.json
+Dockerfile
+docker-compose.override.yml
+SeatHive.Api/bin/
+SeatHive.Api/obj/
+SeatHive.Worker/bin/
+SeatHive.Worker/obj/
+SeatHive.Tests/bin/
+SeatHive.Tests/obj/
+SeatHive.Shared/bin/
+SeatHive.Shared/obj/

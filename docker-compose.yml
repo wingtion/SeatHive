@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # 1. API Service (Port 8080)
+  api:
+    image: seathive-api
+    build:
+      context: .
+      dockerfile: SeatHive.Api/Dockerfile
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=seathivedb;Username=postgres;Password=password
+      - ConnectionStrings__Redis=redis:6379
+      - RabbitMQ__HostName=rabbitmq
+      - ASPNETCORE_ENVIRONMENT=Development
+    ports:
+      - "8080:8080" 
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+
+  # 2. Worker Service (Background Console App)
+  worker:
+    image: seathive-worker
+    build:
+      context: .
+      dockerfile: SeatHive.Worker/Dockerfile
+    environment:
+      - RabbitMQ__HostName=rabbitmq
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=seathivedb;Username=postgres;Password=password
+    depends_on:
+      - rabbitmq
+      - postgres
+
+  # 3. PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: seathive_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: seathivedb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 4. Redis Cache
+  redis:
+    image: redis:alpine
+    container_name: seathive_redis
+    ports:
+      - "6379:6379"
+
+  # 5. RabbitMQ Queue
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: seathive_rabbitmq
+    ports:
+      - "15672:15672"
+      - "5672:5672"   
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+
+volumes:
+  postgres_data:
