@@ -120,7 +120,7 @@ Releasing a hold publishes `HoldReleased`, and a hold that runs out publishes `H
 
 1.  **Register:** `POST /api/auth/register`
 2.  **Login:** `POST /api/auth/login` -> Copy Token (valid for 2 hours).
-3.  **Authorize:** Click the lock icon in Swagger -> Paste `Bearer <TOKEN>`.
+3.  **Authorize:** Click the lock icon in Swagger -> Paste the token only (Swagger adds `Bearer` itself).
 4.  **Create demo data (Admin):** `POST /api/setup/create-data`. Log in with the admin account from your `.env` first. This recreates one event with 100 seats, with seat ids starting at 1 again; users are kept. All bookings are deleted, but booking ids are not reused.
 5.  **Hold:** `POST /api/booking/hold` with `{ "seatId": 5 }` (requires a token). Returns `{ "bookingId", "seatId", "status": "Held", "expiresAt" }`.
 6.  **Confirm:** `POST /api/booking/{bookingId}/confirm` before `expiresAt`. Returns `202` with `{ "bookingId", "seatId", "status": "PaymentPending", "confirmedAt": null }`; the booking is confirmed a few seconds later, when the payment result arrives. Calling it again then returns `200` with `"status": "Confirmed"`. After the hold has expired it returns `410` with `hold_expired`. Send the body `{ "simulatePaymentFailure": true }` to make this payment fail. There is no endpoint to read a booking yet (see the Roadmap); the Worker log shows the payment and the notification.

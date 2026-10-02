@@ -50,12 +50,20 @@ namespace SeatHive.Tests.Integration.Api
         private readonly Dictionary<string, string?> _settings;
         private readonly bool _withWorker;
         private readonly int _paymentDelayMs;
+        private readonly string _environment;
 
         // withWorker also runs the Worker's consumers in this host, with payments that never fail at random and take
         // paymentDelayMs on the test clock (no time by default), so a booking goes through its whole story
         // without a test publishing anything by hand.
-        public ApiFactory(ContainersFixture fixture, Dictionary<string, string?>? overrides = null, bool withWorker = false, int paymentDelayMs = 0)
+        // environment is "Testing" unless a test is about what differs between environments (Swagger, for example).
+        public ApiFactory(
+            ContainersFixture fixture,
+            Dictionary<string, string?>? overrides = null,
+            bool withWorker = false,
+            int paymentDelayMs = 0,
+            string environment = "Testing")
         {
+            _environment = environment;
             _settings = new Dictionary<string, string?>
             {
                 ["ConnectionStrings__DefaultConnection"] = fixture.GetPostgresConnectionString(),
@@ -82,8 +90,9 @@ namespace SeatHive.Tests.Integration.Api
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
-            // Not "Development", so user-secrets on the developer machine cannot leak into tests.
-            builder.UseEnvironment("Testing");
+            // Not "Development" by default, so user-secrets on the developer machine cannot leak into tests.
+            // (Where a test asks for Development, the settings below still win: environment variables come last.)
+            builder.UseEnvironment(_environment);
             builder.ConfigureTestServices(services =>
             {
                 // The harness rebuilds the bus on the in-memory transport. It keeps the consumers with their

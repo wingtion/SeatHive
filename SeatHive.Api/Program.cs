@@ -85,33 +85,19 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo { Title = "SeatHive API", Version = "v1" });
+    c.SwaggerDoc("v1", new Microsoft.OpenApi.OpenApiInfo { Title = "SeatHive API", Version = "v1" });
 
-    // Define the Security Scheme
-    c.AddSecurityDefinition("Bearer", new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    // Define the Security Scheme. With the "http" type Swagger UI adds "Bearer " itself: paste the token only.
+    c.AddSecurityDefinition(AuthorizeOperationFilter.SchemeName, new Microsoft.OpenApi.OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header using the Bearer scheme. Example: \"Bearer {token}\"",
-        Name = "Authorization",
-        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
-        Type = Microsoft.OpenApi.Models.SecuritySchemeType.ApiKey,
-        Scheme = "Bearer"
+        Description = "JWT from POST /api/auth/login. Paste the token only.",
+        Type = Microsoft.OpenApi.SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT"
     });
 
-    // Apply the Security Scheme globally
-    c.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
-    {
-        {
-            new Microsoft.OpenApi.Models.OpenApiSecurityScheme
-            {
-                Reference = new Microsoft.OpenApi.Models.OpenApiReference
-                {
-                    Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
-                    Id = "Bearer"
-                }
-            },
-            new string[] {}
-        }
-    });
+    // Apply the Security Scheme to the endpoints that ask for a token, not to the anonymous ones.
+    c.OperationFilter<AuthorizeOperationFilter>();
 });
 builder.Services.AddScoped<SeatHive.Api.Services.BookingService>();
 builder.Services.AddScoped<SeatHive.Api.Services.IRedisLockService, SeatHive.Api.Services.RedisLockService>();

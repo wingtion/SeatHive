@@ -10,5 +10,5 @@
 - Before reporting a step as done, run the full suite once.
 - Repeat runs (5x) only for concurrency, locking, expiry or messaging tests, and only when that code changed.
 - Run the docker compose smoke test only when Docker, migrations, configuration or cross-service flow changed.
-- Never commit; the user commits.
+- Never commit or push without approval. When an important part is finished and verified, ask whether to commit and push it; do both only after the user says yes, and ask again for each part.
 - Do not change README claims until the code supports them.

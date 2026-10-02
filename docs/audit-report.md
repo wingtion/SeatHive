@@ -198,5 +198,5 @@ net10.0 geçişinde aşağıdaki üç paket bilerek en güncel büyük sürüme 
 Sıra:
 
 - **StackExchange.Redis 3.x:** kilit testleri (bölüm 3, madde 1–4) yazıldıktan sonra yapılacak. Böylece K1–K3 düzeltmeleri bilinen bir istemci sürümünde doğrulanır ve yükseltmenin kilit davranışını bozup bozmadığı testlerle görülür.
-- **Swashbuckle 10.x:** `Program.cs` zaten değişeceği için CORS, rate limiting ve SignalR işleriyle birlikte; D6 (güvenlik şemasının `Http`/`bearer` yapılması) aynı anda çözülebilir.
+- **Swashbuckle 10.x:** yapıldı (adım 5d, alt adım A): 10.2.3'e yükseltildi, Swagger kurulumu Microsoft.OpenApi 2'ye göre yeniden yazıldı. D6 da kapandı: güvenlik şeması `http`/`bearer`, ve yalnızca token isteyen endpoint'lere uygulanıyor (`AuthorizeOperationFilter`). `SwaggerTests` bunu ve Swagger'ın yalnızca Development'ta açık olduğunu doğruluyor.
 - **xunit.runner.visualstudio 4.x:** xunit v3'e geçiş değerlendirilirken, test altyapısı işleriyle birlikte.
