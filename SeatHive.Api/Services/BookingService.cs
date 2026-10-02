@@ -18,25 +18,25 @@ namespace SeatHive.Api.Services
             _publishEndpoint = publishEndpoint;
         }
 
-        public async Task<string> BookSeatAsync(BookingRequest request)
+        public async Task<string> BookSeatAsync(int seatId, int userId)
         {
-            var lockKey = $"lock:seat:{request.SeatId}";
+            var lockKey = $"lock:seat:{seatId}";
 
             // Only a lock we actually acquired is released, when the handle is disposed.
             await using var lockHandle = await _lockService.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(10));
             if (lockHandle == null) return "System busy.";
 
-            var seat = await _context.Seats.FindAsync(request.SeatId);
+            var seat = await _context.Seats.FindAsync(seatId);
             if (seat == null) return "Seat not found.";
             if (seat.IsBooked) return "Seat is already booked.";
 
             // Book it, but only if nobody else did since we read it.
             // The database is the second guard in case the lock fails.
             var updatedRows = await _context.Seats
-                .Where(s => s.Id == request.SeatId && !s.IsBooked)
+                .Where(s => s.Id == seatId && !s.IsBooked)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(s => s.IsBooked, true)
-                    .SetProperty(s => s.UserId, request.UserId)
+                    .SetProperty(s => s.UserId, userId)
                     .SetProperty(s => s.Version, s => s.Version + 1));
 
             if (updatedRows == 0) return "Seat is already booked.";
@@ -46,7 +46,7 @@ namespace SeatHive.Api.Services
             await _publishEndpoint.Publish<BookingCreatedEvent>(new
             {
                 SeatId = seat.Id,
-                UserId = request.UserId,
+                UserId = userId,
                 CreatedAt = DateTime.UtcNow
             });
 

@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using SeatHive.Api.Services; // Ensure this namespace matches yours
 using SeatHive.Api.Models;
 
@@ -6,6 +7,7 @@ namespace SeatHive.Api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [Authorize(Roles = Roles.Admin)]
     public class SimulationController : ControllerBase
     {
         private readonly IServiceScopeFactory _scopeFactory;
@@ -34,11 +36,7 @@ namespace SeatHive.Api.Controllers
                         var service = scope.ServiceProvider.GetRequiredService<BookingService>(); // Resolve BookingService
 
                         // Try to book Seat #1
-                        return await service.BookSeatAsync(new BookingRequest
-                        {
-                            SeatId = 1,
-                            UserId = userId
-                        });
+                        return await service.BookSeatAsync(1, userId);
                     }
                 }));
             }

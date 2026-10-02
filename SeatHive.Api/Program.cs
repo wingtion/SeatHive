@@ -1,16 +1,44 @@
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using SeatHive.Api.Data;
+using SeatHive.Api.Services;
 using StackExchange.Redis;
 using System.Text;
+using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Secrets are never in the repository. They come from user-secrets (local development)
+// or environment variables (.env for docker compose). A missing one stops the application here.
+string RequiredSetting(string key)
+{
+    var value = builder.Configuration[key];
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        throw new InvalidOperationException(
+            $"Required setting '{key}' is not configured. " +
+            "Set it with 'dotnet user-secrets' for local development or in .env for docker compose (see .env.example).");
+    }
+    return value;
+}
+
+var jwtKey = RequiredSetting("Jwt:Key");
+if (Encoding.UTF8.GetByteCount(jwtKey) < 32)
+{
+    throw new InvalidOperationException("Required setting 'Jwt:Key' must be at least 32 bytes long.");
+}
+
+var dbConnectionString = RequiredSetting("ConnectionStrings:DefaultConnection");
+var redisConnectionString = RequiredSetting("ConnectionStrings:Redis");
+var rabbitUsername = RequiredSetting("RabbitMQ:Username");
+var rabbitPassword = RequiredSetting("RabbitMQ:Password");
+
 // Add services to the container.
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseNpgsql(dbConnectionString));
 
 builder.Services.AddControllers();
 
@@ -22,16 +50,13 @@ builder.Services.AddMassTransit(x =>
 
         cfg.Host(rabbitHost, "/", h =>
         {
-            h.Username("guest");
-            h.Password("guest");
+            h.Username(rabbitUsername);
+            h.Password(rabbitPassword);
         });
 
         cfg.ConfigureEndpoints(context);
     });
 });
-
-// Get the connection string from appsettings.json OR Docker Environment Variables
-var redisConnectionString = builder.Configuration.GetConnectionString("Redis") ?? "localhost:6379";
 
 var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
 redisOptions.AbortOnConnectFail = false;
@@ -78,6 +103,8 @@ builder.Services.AddScoped<SeatHive.Api.Services.AuthService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        // Keep the claim names exactly as they are in the token ("sub", "role").
+        options.MapInboundClaims = false;
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -86,9 +113,30 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(builder.Configuration["Jwt:Key"]!))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            NameClaimType = "sub",
+            RoleClaimType = "role"
         };
     });
+
+// Requests per minute. Auth is limited per IP address, booking per user.
+var authPermitLimit = builder.Configuration.GetValue("RateLimiting:Auth:PermitLimit", 10);
+var bookingPermitLimit = builder.Configuration.GetValue("RateLimiting:Booking:PermitLimit", 30);
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    options.AddPolicy(RateLimitPolicies.Auth, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = authPermitLimit, Window = TimeSpan.FromMinutes(1) }));
+
+    options.AddPolicy(RateLimitPolicies.Booking, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.FindFirst("sub")?.Value ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = bookingPermitLimit, Window = TimeSpan.FromMinutes(1) }));
+});
 
 var app = builder.Build();
 
@@ -111,6 +159,8 @@ using (var scope = app.Services.CreateScope())
             await Task.Delay(TimeSpan.FromSeconds(3));
         }
     }
+
+    await AdminSeeder.SeedAsync(db, app.Configuration, app.Logger);
 }
 
 if (app.Environment.IsDevelopment())
@@ -123,6 +173,9 @@ app.UseHttpsRedirection();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+// After authentication, so the booking limit can be counted per user.
+app.UseRateLimiter();
 
 app.MapControllers();
 

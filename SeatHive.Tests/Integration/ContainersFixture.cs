@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Npgsql;
 using SeatHive.Api.Data;
 using SeatHive.Api.Models;
+using SeatHive.Tests.Integration.Api;
 using StackExchange.Redis;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
@@ -17,6 +19,11 @@ namespace SeatHive.Tests.Integration
 
         public IConnectionMultiplexer Redis { get; private set; } = null!;
 
+        public string RedisConnectionString => _redis.GetConnectionString();
+
+        // The API under test, wired to the containers above.
+        public ApiFactory Api { get; private set; } = null!;
+
         public async Task InitializeAsync()
         {
             await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync());
@@ -25,19 +32,35 @@ namespace SeatHive.Tests.Integration
 
             await using var db = CreateContext();
             await db.Database.MigrateAsync();
+
+            Api = new ApiFactory(this);
         }
 
         public async Task DisposeAsync()
         {
+            await Api.DisposeAsync();
             await Redis.DisposeAsync();
             await _postgres.DisposeAsync();
             await _redis.DisposeAsync();
         }
 
+        // Connection string for the default test database, or for another database on the same server.
+        public string GetPostgresConnectionString(string? database = null)
+        {
+            var builder = new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString());
+            if (database != null) builder.Database = database;
+            return builder.ConnectionString;
+        }
+
         public AppDbContext CreateContext(params IInterceptor[] interceptors)
         {
+            return CreateContext(GetPostgresConnectionString(), interceptors);
+        }
+
+        public AppDbContext CreateContext(string connectionString, params IInterceptor[] interceptors)
+        {
             var options = new DbContextOptionsBuilder<AppDbContext>()
-                .UseNpgsql(_postgres.GetConnectionString())
+                .UseNpgsql(connectionString)
                 .AddInterceptors(interceptors)
                 .Options;
             return new AppDbContext(options);

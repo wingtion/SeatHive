@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using SeatHive.Api.Models;
 
 namespace SeatHive.Api.Data
@@ -12,5 +12,11 @@ namespace SeatHive.Api.Data
         public DbSet<Event> Events { get; set; }
         public DbSet<Seat> Seats { get; set; }
         public DbSet<User> Users { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            // Emails are stored lowercase, so this also blocks duplicates that differ only by casing.
+            modelBuilder.Entity<User>().HasIndex(u => u.Email).IsUnique();
+        }
     }
 }

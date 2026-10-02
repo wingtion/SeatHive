@@ -36,7 +36,7 @@ namespace SeatHive.Tests.Integration
             {
                 await using var db = _fixture.CreateContext(bothHaveRead);
                 var service = new BookingService(db, noLock.Object, bus.Object);
-                return await service.BookSeatAsync(new BookingRequest { SeatId = seatId, UserId = userId });
+                return await service.BookSeatAsync(seatId, userId);
             }));
 
             var results = await Task.WhenAll(attempts);

@@ -5,7 +5,6 @@ obj/
 *.user
 *.suo
 appsettings.Development.json
-docker-compose.override.yml
 SeatHive.Api/bin/
 SeatHive.Api/obj/
 SeatHive.Worker/bin/
@@ -17,3 +16,4 @@ SeatHive.Shared/obj/
 
 # Claude Code machine-local settings
 .claude/settings.local.json
+.env

@@ -44,9 +44,7 @@ namespace SeatHive.Tests
             _fakeDb.Seats.Add(new Seat { Id = seatId, IsBooked = true, UserId = 99 });
             await _fakeDb.SaveChangesAsync();
 
-            var request = new BookingRequest { SeatId = seatId, UserId = 100 };
-
-            var result = await _service.BookSeatAsync(request);
+            var result = await _service.BookSeatAsync(seatId, 100);
 
             Assert.Equal("Seat is already booked.", result);
         }
@@ -57,9 +55,7 @@ namespace SeatHive.Tests
             _mockLock.Setup(x => x.AcquireLockAsync(It.IsAny<string>(), It.IsAny<TimeSpan>()))
                      .ReturnsAsync((IAsyncDisposable?)null);
 
-            var request = new BookingRequest { SeatId = 3, UserId = 100 };
-
-            var result = await _service.BookSeatAsync(request);
+            var result = await _service.BookSeatAsync(3, 100);
 
             Assert.Equal("System busy.", result);
             _mockLockHandle.Verify(x => x.DisposeAsync(), Times.Never);
@@ -71,7 +67,7 @@ namespace SeatHive.Tests
             _fakeDb.Seats.Add(new Seat { Id = 4, IsBooked = true, UserId = 99 });
             await _fakeDb.SaveChangesAsync();
 
-            await _service.BookSeatAsync(new BookingRequest { SeatId = 4, UserId = 100 });
+            await _service.BookSeatAsync(4, 100);
 
             _mockLockHandle.Verify(x => x.DisposeAsync(), Times.Once);
         }

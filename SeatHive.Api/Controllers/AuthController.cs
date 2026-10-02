@@ -1,10 +1,13 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
+using SeatHive.Api.Models;
 using SeatHive.Api.Services;
 
 namespace SeatHive.Api.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [EnableRateLimiting(RateLimitPolicies.Auth)]
     public class AuthController : ControllerBase
     {
         private readonly AuthService _authService;
@@ -15,7 +18,7 @@ namespace SeatHive.Api.Controllers
         }
 
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] LoginRequest request)
+        public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
             var result = await _authService.RegisterAsync(request.Email, request.Password);
             if (result == "User already exists.") return BadRequest(result);
@@ -30,11 +33,5 @@ namespace SeatHive.Api.Controllers
 
             return Ok(new { Token = token });
         }
-    }
-
-    public class LoginRequest
-    {
-        public string Email { get; set; } = string.Empty;
-        public string Password { get; set; } = string.Empty;
     }
 }

@@ -34,7 +34,7 @@ namespace SeatHive.Tests.Integration
                 {
                     await using var db = _fixture.CreateContext();
                     var service = new BookingService(db, new RedisLockService(_fixture.Redis), bus.Object);
-                    var result = await service.BookSeatAsync(new BookingRequest { SeatId = seatId, UserId = userId });
+                    var result = await service.BookSeatAsync(seatId, userId);
                     return (userId, result);
                 }));
 

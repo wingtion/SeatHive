@@ -1,0 +1,17 @@
+# Local development only. "docker compose up" picks this file up automatically.
+# It publishes the infrastructure ports on this machine (127.0.0.1) so the API and Worker
+# can also be started with "dotnet run". A server skips it with: docker compose -f docker-compose.yml up
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  rabbitmq:
+    ports:
+      - "127.0.0.1:15672:15672"
+      - "127.0.0.1:5672:5672"

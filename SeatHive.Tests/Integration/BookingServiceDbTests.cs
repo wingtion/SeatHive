@@ -30,7 +30,7 @@ namespace SeatHive.Tests.Integration
             await using var db = _fixture.CreateContext();
             var service = new BookingService(db, mockLock.Object, mockBus.Object);
 
-            var result = await service.BookSeatAsync(new BookingRequest { SeatId = seatId, UserId = 100 });
+            var result = await service.BookSeatAsync(seatId, 100);
 
             Assert.Equal("Booking successful!", result);
 
