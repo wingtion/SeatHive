@@ -4,7 +4,6 @@ using Moq;
 using SeatHive.Api.Data;
 using SeatHive.Api.Models;
 using SeatHive.Api.Services;
-using SeatHive.Shared.Events;
 
 namespace SeatHive.Tests
 {
@@ -13,6 +12,7 @@ namespace SeatHive.Tests
         private readonly AppDbContext _fakeDb;
         private readonly Mock<IPublishEndpoint> _mockBus;
         private readonly Mock<IRedisLockService> _mockLock; // <--- Mock the Interface
+        private readonly Mock<IAsyncDisposable> _mockLockHandle;
         private readonly BookingService _service;
 
         public BookingServiceTests()
@@ -28,9 +28,10 @@ namespace SeatHive.Tests
 
             // 3. Setup Fake Lock Service
             _mockLock = new Mock<IRedisLockService>();
-            
+            _mockLockHandle = new Mock<IAsyncDisposable>();
+
             _mockLock.Setup(x => x.AcquireLockAsync(It.IsAny<string>(), It.IsAny<TimeSpan>()))
-                     .ReturnsAsync(true);
+                     .ReturnsAsync(_mockLockHandle.Object);
 
             // 4. Create Service
             _service = new BookingService(_fakeDb, _mockLock.Object, _mockBus.Object);
@@ -51,19 +52,28 @@ namespace SeatHive.Tests
         }
 
         [Fact]
-        public async Task BookSeat_ShouldSuccess_WhenSeatIsFree()
+        public async Task BookSeat_ShouldNotReleaseLock_WhenLockIsNotAcquired()
         {
-            var seatId = 2;
-            _fakeDb.Seats.Add(new Seat { Id = seatId, IsBooked = false });
-            await _fakeDb.SaveChangesAsync();
+            _mockLock.Setup(x => x.AcquireLockAsync(It.IsAny<string>(), It.IsAny<TimeSpan>()))
+                     .ReturnsAsync((IAsyncDisposable?)null);
 
-            var request = new BookingRequest { SeatId = seatId, UserId = 100 };
+            var request = new BookingRequest { SeatId = 3, UserId = 100 };
 
             var result = await _service.BookSeatAsync(request);
 
-            Assert.Equal("Booking successful!", result);
+            Assert.Equal("System busy.", result);
+            _mockLockHandle.Verify(x => x.DisposeAsync(), Times.Never);
+        }
 
-            _mockBus.Verify(x => x.Publish<BookingCreatedEvent>(It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
+        [Fact]
+        public async Task BookSeat_ShouldReleaseLockOnce_WhenLockIsAcquired()
+        {
+            _fakeDb.Seats.Add(new Seat { Id = 4, IsBooked = true, UserId = 99 });
+            await _fakeDb.SaveChangesAsync();
+
+            await _service.BookSeatAsync(new BookingRequest { SeatId = 4, UserId = 100 });
+
+            _mockLockHandle.Verify(x => x.DisposeAsync(), Times.Once);
         }
     }
 }
