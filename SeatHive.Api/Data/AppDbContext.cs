@@ -1,5 +1,7 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using SeatHive.Api.Models;
+using Event = SeatHive.Api.Models.Event;
 
 namespace SeatHive.Api.Data
 {
@@ -27,11 +29,11 @@ namespace SeatHive.Api.Data
             {
                 booking.Property(b => b.Status).HasConversion<string>();
 
-                // The database guarantee: a seat has at most one active (Held or Confirmed) booking.
+                // The database guarantee: a seat has at most one active (Held, PaymentPending or Confirmed) booking.
                 // Expired and Released bookings stay as history and do not block the seat.
                 booking.HasIndex(b => b.SeatId)
                     .IsUnique()
-                    .HasFilter("\"Status\" IN ('Held', 'Confirmed')");
+                    .HasFilter("\"Status\" IN ('Held', 'PaymentPending', 'Confirmed')");
 
                 booking.HasOne(b => b.Seat)
                     .WithMany(s => s.Bookings)
@@ -43,6 +45,12 @@ namespace SeatHive.Api.Data
                     .HasForeignKey(b => b.UserId)
                     .OnDelete(DeleteBehavior.Restrict);
             });
+
+            // MassTransit transactional outbox and inbox: events are stored in the same transaction
+            // as the booking change, and a message delivered twice is consumed once.
+            modelBuilder.AddInboxStateEntity();
+            modelBuilder.AddOutboxMessageEntity();
+            modelBuilder.AddOutboxStateEntity();
         }
     }
 }

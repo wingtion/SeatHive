@@ -135,7 +135,7 @@ namespace SeatHive.Tests.Integration.Api
             var first = await _fixture.Api.CreateUserClientAsync();
             var second = await _fixture.Api.CreateUserClientAsync();
             var bookingId = await HoldAsync(first, seatId);
-            (await first.PostAsync(ConfirmUrl(bookingId), null)).EnsureSuccessStatusCode();
+            await _fixture.ConfirmThroughPaymentAsync(first, bookingId);
 
             var response = await second.PostAsJsonAsync(HoldUrl, new { seatId });
 
@@ -259,7 +259,7 @@ namespace SeatHive.Tests.Integration.Api
         }
 
         [Fact]
-        public async Task Confirm_ShouldReturn200_AndConfirmTheHold()
+        public async Task Confirm_ShouldReturn202_AndStartThePayment()
         {
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
@@ -267,23 +267,26 @@ namespace SeatHive.Tests.Integration.Api
 
             var response = await client.PostAsync(ConfirmUrl(bookingId), null);
 
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal(bookingId, body.GetProperty("bookingId").GetInt32());
             Assert.Equal(seatId, body.GetProperty("seatId").GetInt32());
-            Assert.Equal("Confirmed", body.GetProperty("status").GetString());
-            Assert.Equal(_fixture.Api.Clock.GetUtcNow(), body.GetProperty("confirmedAt").GetDateTimeOffset());
-            Assert.Equal(1, await CountBookingsAsync(seatId, "Confirmed"));
-            Assert.Equal(0, await CountBookingsAsync(seatId, "Held"));
+            Assert.Equal("PaymentPending", body.GetProperty("status").GetString());
+            Assert.Equal(1, await CountBookingsAsync(seatId, "PaymentPending"));
+            Assert.Equal(0, await CountBookingsAsync(seatId, "Confirmed"));
+
+            // Confirming again while the payment is in progress changes nothing.
+            var again = await client.PostAsync(ConfirmUrl(bookingId), null);
+            Assert.Equal(HttpStatusCode.Accepted, again.StatusCode);
         }
 
         [Fact]
-        public async Task Confirm_ShouldReturn200Again_WhenTheOwnerRepeatsIt()
+        public async Task Confirm_ShouldReturn200_WhenTheOwnerRepeatsItAfterTheBookingIsConfirmed()
         {
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(client, seatId);
-            (await client.PostAsync(ConfirmUrl(bookingId), null)).EnsureSuccessStatusCode();
+            await _fixture.ConfirmThroughPaymentAsync(client, bookingId);
 
             var response = await client.PostAsync(ConfirmUrl(bookingId), null);
 
@@ -313,7 +316,7 @@ namespace SeatHive.Tests.Integration.Api
             var owner = await _fixture.Api.CreateUserClientAsync();
             var other = await _fixture.Api.CreateUserClientAsync();
             var bookingId = await HoldAsync(owner, await _fixture.CreateFreeSeatAsync());
-            (await owner.PostAsync(ConfirmUrl(bookingId), null)).EnsureSuccessStatusCode();
+            await _fixture.ConfirmThroughPaymentAsync(owner, bookingId);
 
             var response = await other.PostAsync(ConfirmUrl(bookingId), null);
 
@@ -393,12 +396,26 @@ namespace SeatHive.Tests.Integration.Api
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(client, seatId);
-            (await client.PostAsync(ConfirmUrl(bookingId), null)).EnsureSuccessStatusCode();
+            await _fixture.ConfirmThroughPaymentAsync(client, bookingId);
 
             var response = await client.PostAsync(ReleaseUrl(bookingId), null);
 
             await AssertProblemAsync(response, HttpStatusCode.Conflict, "hold_not_active");
             Assert.Equal(1, await CountBookingsAsync(seatId, "Confirmed"));
+        }
+
+        [Fact]
+        public async Task Reset_ShouldNotReuseBookingIds()
+        {
+            var client = await _fixture.Api.CreateUserClientAsync();
+            var admin = await _fixture.Api.CreateAdminClientAsync();
+            var before = await HoldAsync(client, await _fixture.CreateFreeSeatAsync());
+
+            (await admin.PostAsync("/api/Setup/create-data", null)).EnsureSuccessStatusCode();
+            var after = await HoldAsync(client, await _fixture.CreateFreeSeatAsync());
+
+            // A message about an old booking, still on its way, must never meet a new booking with the same id.
+            Assert.True(after > before, $"The booking after the reset got id {after}; the one before it had {before}.");
         }
 
         [Fact]

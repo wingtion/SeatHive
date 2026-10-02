@@ -29,6 +29,9 @@ namespace SeatHive.Tests.Integration
         [InlineData("Confirmed", "Held")]
         [InlineData("Held", "Confirmed")]
         [InlineData("Held", "Held")]
+        [InlineData("PaymentPending", "Held")]
+        [InlineData("PaymentPending", "Confirmed")]
+        [InlineData("Held", "PaymentPending")]
         public async Task SecondActiveBooking_ShouldBeRejectedByTheDatabase(string first, string second)
         {
             var seatId = await _fixture.CreateFreeSeatAsync();

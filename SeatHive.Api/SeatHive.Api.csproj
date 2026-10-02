@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="BCrypt.Net-Next" Version="4.2.0" />
+    <PackageReference Include="MassTransit.EntityFrameworkCore" Version="8.5.11" />
     <PackageReference Include="MassTransit.RabbitMQ" Version="8.5.11" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.12" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.12" />

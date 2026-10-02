@@ -6,6 +6,7 @@ using Microsoft.Extensions.Time.Testing;
 using Moq;
 using SeatHive.Api.Models;
 using SeatHive.Api.Services;
+using SeatHive.Shared.Events;
 
 namespace SeatHive.Tests.Integration
 {
@@ -48,6 +49,8 @@ namespace SeatHive.Tests.Integration
             // The second insert hits the unique index on active bookings.
             Assert.Equal(1, results.Count(r => r.IsSuccess));
             Assert.Equal(1, results.Count(r => r.Error == BookingError.SeatHeld));
+            // The loser's insert was rolled back, so only the winner announced a held seat.
+            Assert.Single(ContainersFixture.PublishedTo<SeatHeld>(bus));
 
             await using var verifyDb = _fixture.CreateContext();
             Assert.Equal(1, await verifyDb.Bookings.CountAsync(b => b.SeatId == seatId));

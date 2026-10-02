@@ -41,7 +41,7 @@ namespace SeatHive.Tests.Integration
         }
 
         [Fact]
-        public async Task HoldThenConfirm_ShouldConfirmTheBooking_AndPublishOnce()
+        public async Task HoldPayConfirm_ShouldConfirmTheBooking_AndPublishEachStepOnce()
         {
             var seatId = await _fixture.CreateFreeSeatAsync();
             var userId = await _fixture.CreateUserAsync();
@@ -53,13 +53,24 @@ namespace SeatHive.Tests.Integration
             Assert.True(hold.IsSuccess);
             Assert.Equal(BookingStatus.Held, hold.Booking!.Status);
             Assert.Equal(_clock.GetUtcNow().UtcDateTime.AddMinutes(5), hold.Booking.ExpiresAt);
-            // A hold is not a booking yet.
-            Assert.Empty(_mockBus.Invocations);
+            var held = Assert.Single(ContainersFixture.PublishedTo<SeatHeld>(_mockBus));
+            Assert.Equal((hold.Booking.Id, seatId, userId), (held.BookingId, held.SeatId, held.UserId));
+            Assert.Equal(hold.Booking.ExpiresAt, held.ExpiresAt);
 
-            var confirm = await service.ConfirmAsync(hold.Booking.Id, userId);
+            var payment = await service.RequestPaymentAsync(hold.Booking.Id, userId);
+
+            Assert.True(payment.IsSuccess);
+            var requested = Assert.Single(ContainersFixture.PublishedTo<PaymentRequested>(_mockBus));
+            Assert.Equal((hold.Booking.Id, seatId, userId), (requested.BookingId, requested.SeatId, requested.UserId));
+
+            var confirm = await service.CompletePaymentAsync(ContainersFixture.SuccessfulPayment(hold.Booking.Id, requested.PaymentId));
 
             Assert.True(confirm.IsSuccess);
-            _mockBus.Verify(x => x.Publish<BookingCreatedEvent>(It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
+            var confirmed = Assert.Single(ContainersFixture.PublishedTo<BookingConfirmed>(_mockBus));
+            Assert.Equal((hold.Booking.Id, seatId, userId, requested.PaymentId),
+                (confirmed.BookingId, confirmed.SeatId, confirmed.UserId, confirmed.PaymentId));
+            // Three steps, three events.
+            Assert.Equal(3, _mockBus.Invocations.Count);
 
             await using var verifyDb = _fixture.CreateContext();
             var booking = await verifyDb.Bookings.AsNoTracking().SingleAsync(b => b.SeatId == seatId);
@@ -67,25 +78,6 @@ namespace SeatHive.Tests.Integration
             Assert.Equal(userId, booking.UserId);
             Assert.Equal(BookingStatus.Confirmed, booking.Status);
             Assert.Equal(_clock.GetUtcNow().UtcDateTime, booking.ConfirmedAt);
-        }
-
-        [Fact]
-        public async Task Confirm_ShouldPublishOnlyOnce_WhenRepeated()
-        {
-            var seatId = await _fixture.CreateFreeSeatAsync();
-            var userId = await _fixture.CreateUserAsync();
-            await using var db = _fixture.CreateContext();
-            var service = _fixture.CreateBookingService(db, _clock, _mockLock.Object, _mockBus.Object);
-            var hold = await service.HoldSeatAsync(seatId, userId);
-
-            var first = await service.ConfirmAsync(hold.Booking!.Id, userId);
-            var second = await service.ConfirmAsync(hold.Booking.Id, userId);
-
-            Assert.True(first.IsSuccess);
-            Assert.True(second.IsSuccess);
-            Assert.False(second.Changed);
-            Assert.Equal(BookingStatus.Confirmed, second.Booking!.Status);
-            _mockBus.Verify(x => x.Publish<BookingCreatedEvent>(It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [Fact]

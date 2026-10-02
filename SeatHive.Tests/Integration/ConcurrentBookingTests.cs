@@ -4,6 +4,7 @@ using Microsoft.Extensions.Time.Testing;
 using Moq;
 using SeatHive.Api.Models;
 using SeatHive.Api.Services;
+using SeatHive.Shared.Events;
 
 namespace SeatHive.Tests.Integration
 {
@@ -43,7 +44,7 @@ namespace SeatHive.Tests.Integration
 
                 var results = await Task.WhenAll(attempts);
                 var winners = results.Where(r => r.result.IsSuccess).Select(r => r.userId).ToList();
-                var published = bus.Invocations.Count(i => i.Method.Name == nameof(IPublishEndpoint.Publish));
+                var published = ContainersFixture.PublishedTo<SeatHeld>(bus);
 
                 // The seat must have exactly one booking, a hold, and it must belong to the winner.
                 await using var verifyDb = _fixture.CreateContext();
@@ -51,12 +52,12 @@ namespace SeatHive.Tests.Integration
                     .Where(b => b.SeatId == seatId)
                     .ToListAsync();
 
-                // A hold is not a booking yet, so nothing is published.
-                if (winners.Count != 1 || published != 0 || bookings.Count != 1
+                // Only the winner announces a held seat.
+                if (winners.Count != 1 || published.Count != 1 || published[0].UserId != winners[0] || bookings.Count != 1
                     || bookings[0].UserId != winners[0] || bookings[0].Status != BookingStatus.Held)
                 {
                     failedRounds.Add(
-                        $"round {round}: successes={winners.Count} [{string.Join(",", winners)}], events={published}, " +
+                        $"round {round}: successes={winners.Count} [{string.Join(",", winners)}], events={published.Count}, " +
                         $"bookings=[{string.Join(",", bookings.Select(b => $"{b.UserId}:{b.Status}"))}]");
                 }
             }

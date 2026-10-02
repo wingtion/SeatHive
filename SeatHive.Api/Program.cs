@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using SeatHive.Api.Consumers;
 using SeatHive.Api.Data;
 using SeatHive.Api.Services;
 using StackExchange.Redis;
@@ -55,6 +56,11 @@ builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
 
 builder.Services.AddMassTransit(x =>
 {
+    x.AddConsumer<PaymentSucceededConsumer, InboxConsumerDefinition<PaymentSucceededConsumer>>();
+    x.AddConsumer<PaymentFailedConsumer, InboxConsumerDefinition<PaymentFailedConsumer>>();
+
+    x.AddBookingOutbox(builder.Configuration);
+
     x.UsingRabbitMq((context, cfg) =>
     {
         var rabbitHost = builder.Configuration["RabbitMQ:HostName"] ?? "localhost";

@@ -24,8 +24,12 @@ namespace SeatHive.Api.Controllers
             await using var transaction = await _context.Database.BeginTransactionAsync();
 
             // 1. Reset the demo data only. Users are kept.
-            // RESTART IDENTITY makes seat ids start at 1 again.
-            await _context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Bookings\", \"Seats\", \"Events\" RESTART IDENTITY");
+            // Seat and event ids start at 1 again. Booking ids are never reused: a payment result or refund
+            // for a deleted booking may still be on its way, and it must not meet a new booking with the same id.
+            await _context.Database.ExecuteSqlRawAsync(
+                "TRUNCATE TABLE \"Bookings\", \"Seats\", \"Events\"; " +
+                "ALTER TABLE \"Seats\" ALTER COLUMN \"Id\" RESTART; " +
+                "ALTER TABLE \"Events\" ALTER COLUMN \"Id\" RESTART;");
 
             // 2. Create Event
             var concert = new Event

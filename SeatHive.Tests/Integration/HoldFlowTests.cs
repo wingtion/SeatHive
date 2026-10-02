@@ -29,10 +29,21 @@ namespace SeatHive.Tests.Integration
             return await _fixture.CreateBookingService(db, clock ?? _clock, options: options).HoldSeatAsync(seatId, userId);
         }
 
-        private async Task<BookingResult> ConfirmAsync(int bookingId, int userId, TimeProvider? clock = null, IPublishEndpoint? bus = null)
+        // Confirming starts the payment; the booking is Confirmed once the payment result arrives.
+        private async Task<BookingResult> RequestPaymentAsync(int bookingId, int userId, TimeProvider? clock = null, IPublishEndpoint? bus = null)
         {
             await using var db = _fixture.CreateContext();
-            return await _fixture.CreateBookingService(db, clock ?? _clock, bus: bus).ConfirmAsync(bookingId, userId);
+            return await _fixture.CreateBookingService(db, clock ?? _clock, bus: bus).RequestPaymentAsync(bookingId, userId);
+        }
+
+        // The whole way to Confirmed: request the payment, then deliver its successful result.
+        private async Task<BookingResult> PayAsync(int bookingId, int userId)
+        {
+            var requested = await RequestPaymentAsync(bookingId, userId);
+            if (!requested.IsSuccess) return requested;
+
+            await using var db = _fixture.CreateContext();
+            return await _fixture.CreateBookingService(db, _clock).CompletePaymentAsync(ContainersFixture.SuccessfulPayment(bookingId, requested.Booking!.PaymentId!.Value));
         }
 
         private async Task<BookingResult> ReleaseAsync(int bookingId, int userId)
@@ -114,7 +125,7 @@ namespace SeatHive.Tests.Integration
             var hold = await HoldAsync(seatId, userId);
             _clock.Advance(HoldDuration - TimeSpan.FromSeconds(1));
 
-            var result = await ConfirmAsync(hold.Booking!.Id, userId);
+            var result = await PayAsync(hold.Booking!.Id, userId);
 
             Assert.True(result.IsSuccess);
             Assert.Equal(BookingStatus.Confirmed, (await ReadBookingAsync(hold.Booking.Id)).Status);
@@ -131,10 +142,10 @@ namespace SeatHive.Tests.Integration
             var hold = await HoldAsync(seatId, userId);
             _clock.Advance(HoldDuration + TimeSpan.FromSeconds(secondsAfterExpiry));
 
-            var result = await ConfirmAsync(hold.Booking!.Id, userId, bus: bus.Object);
+            var result = await RequestPaymentAsync(hold.Booking!.Id, userId, bus: bus.Object);
 
             Assert.Equal(BookingError.HoldExpired, result.Error);
-            Assert.NotEqual(BookingStatus.Confirmed, (await ReadBookingAsync(hold.Booking.Id)).Status);
+            Assert.NotEqual(BookingStatus.PaymentPending, (await ReadBookingAsync(hold.Booking.Id)).Status);
             Assert.Empty(bus.Invocations);
         }
 
@@ -147,7 +158,7 @@ namespace SeatHive.Tests.Integration
             _clock.Advance(HoldDuration);
             await SweepAsync();
 
-            var result = await ConfirmAsync(hold.Booking!.Id, userId);
+            var result = await PayAsync(hold.Booking!.Id, userId);
 
             Assert.Equal(BookingError.HoldExpired, result.Error);
             Assert.Equal(BookingStatus.Expired, (await ReadBookingAsync(hold.Booking.Id)).Status);
@@ -160,13 +171,13 @@ namespace SeatHive.Tests.Integration
             var users = await _fixture.CreateUsersAsync(2);
             var hold = await HoldAsync(seatId, users[0]);
 
-            Assert.Equal(BookingError.NotHoldOwner, (await ConfirmAsync(hold.Booking!.Id, users[1])).Error);
+            Assert.Equal(BookingError.NotHoldOwner, (await RequestPaymentAsync(hold.Booking!.Id, users[1])).Error);
             Assert.Equal(BookingError.NotHoldOwner, (await ReleaseAsync(hold.Booking.Id, users[1])).Error);
             Assert.Equal(BookingStatus.Held, (await ReadBookingAsync(hold.Booking.Id)).Status);
 
             // Confirming again is idempotent for the owner only.
-            Assert.True((await ConfirmAsync(hold.Booking.Id, users[0])).IsSuccess);
-            Assert.Equal(BookingError.NotHoldOwner, (await ConfirmAsync(hold.Booking.Id, users[1])).Error);
+            Assert.True((await RequestPaymentAsync(hold.Booking.Id, users[0])).IsSuccess);
+            Assert.Equal(BookingError.NotHoldOwner, (await RequestPaymentAsync(hold.Booking.Id, users[1])).Error);
         }
 
         [Fact]
@@ -174,7 +185,7 @@ namespace SeatHive.Tests.Integration
         {
             var userId = await _fixture.CreateUserAsync();
 
-            Assert.Equal(BookingError.BookingNotFound, (await ConfirmAsync(int.MaxValue, userId)).Error);
+            Assert.Equal(BookingError.BookingNotFound, (await RequestPaymentAsync(int.MaxValue, userId)).Error);
             Assert.Equal(BookingError.BookingNotFound, (await ReleaseAsync(int.MaxValue, userId)).Error);
         }
 
@@ -193,7 +204,7 @@ namespace SeatHive.Tests.Integration
             Assert.True(next.IsSuccess);
 
             // A released hold can be neither confirmed nor released again.
-            Assert.Equal(BookingError.HoldNotActive, (await ConfirmAsync(hold.Booking.Id, users[0])).Error);
+            Assert.Equal(BookingError.HoldNotActive, (await RequestPaymentAsync(hold.Booking.Id, users[0])).Error);
             Assert.Equal(BookingError.HoldNotActive, (await ReleaseAsync(hold.Booking.Id, users[0])).Error);
         }
 
@@ -203,7 +214,7 @@ namespace SeatHive.Tests.Integration
             var seatId = await _fixture.CreateFreeSeatAsync();
             var userId = await _fixture.CreateUserAsync();
             var hold = await HoldAsync(seatId, userId);
-            await ConfirmAsync(hold.Booking!.Id, userId);
+            await PayAsync(hold.Booking!.Id, userId);
 
             var result = await ReleaseAsync(hold.Booking.Id, userId);
 
@@ -239,7 +250,7 @@ namespace SeatHive.Tests.Integration
 
             // A confirmed booking is not a hold any more.
             Assert.Equal(BookingError.HoldLimitReached, (await HoldAsync(await _fixture.CreateFreeSeatAsync(), userId)).Error);
-            Assert.True((await ConfirmAsync(holds[1].Booking!.Id, userId)).IsSuccess);
+            Assert.True((await PayAsync(holds[1].Booking!.Id, userId)).IsSuccess);
             Assert.True((await HoldAsync(await _fixture.CreateFreeSeatAsync(), userId)).IsSuccess);
         }
 
@@ -292,7 +303,7 @@ namespace SeatHive.Tests.Integration
             var users = await _fixture.CreateUsersAsync(3);
             var expiring = await HoldAsync(await _fixture.CreateFreeSeatAsync(), users[0]);
             var confirmed = await HoldAsync(await _fixture.CreateFreeSeatAsync(), users[1]);
-            await ConfirmAsync(confirmed.Booking!.Id, users[1]);
+            await PayAsync(confirmed.Booking!.Id, users[1]);
             _clock.Advance(TimeSpan.FromMinutes(1));
             var stillValid = await HoldAsync(await _fixture.CreateFreeSeatAsync(), users[2]);
 
@@ -324,7 +335,7 @@ namespace SeatHive.Tests.Integration
                 var bus = new Mock<IPublishEndpoint>();
                 var hold = await HoldAsync(seatId, userId);
 
-                var confirmTask = Task.Run(() => ConfirmAsync(hold.Booking!.Id, userId, confirmClock, bus.Object));
+                var confirmTask = Task.Run(() => RequestPaymentAsync(hold.Booking!.Id, userId, confirmClock, bus.Object));
                 var sweepTask = Task.Run(() => SweepAsync(sweeperClock));
                 await sweepTask;
                 var confirm = await confirmTask;
@@ -332,7 +343,7 @@ namespace SeatHive.Tests.Integration
                 var status = (await ReadBookingAsync(hold.Booking!.Id)).Status;
                 var published = bus.Invocations.Count(i => i.Method.Name == nameof(IPublishEndpoint.Publish));
 
-                var confirmWon = confirm.IsSuccess && status == BookingStatus.Confirmed && published == 1;
+                var confirmWon = confirm.IsSuccess && status == BookingStatus.PaymentPending && published == 1;
                 var sweeperWon = confirm.Error == BookingError.HoldExpired && status == BookingStatus.Expired && published == 0;
 
                 if (!confirmWon && !sweeperWon)

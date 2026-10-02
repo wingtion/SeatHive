@@ -14,6 +14,8 @@ namespace SeatHive.Api.Services
         HoldExpired,
         // The booking is no longer a hold (released, or already confirmed when releasing).
         HoldNotActive,
+        // The hold cannot be released while its payment is being processed.
+        PaymentInProgress,
         BookingNotFound,
         NotHoldOwner
     }

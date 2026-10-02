@@ -13,6 +13,7 @@ namespace SeatHive.Api.Services
         public const string HoldLimitReached = "hold_limit_reached";
         public const string HoldExpired = "hold_expired";
         public const string HoldNotActive = "hold_not_active";
+        public const string PaymentInProgress = "payment_in_progress";
         public const string BookingNotFound = "booking_not_found";
         public const string NotHoldOwner = "not_hold_owner";
         public const string ValidationFailed = "validation_failed";

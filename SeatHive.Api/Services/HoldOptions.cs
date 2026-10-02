@@ -11,6 +11,10 @@ namespace SeatHive.Api.Services
         // How many seats one user can hold at the same time.
         public int MaxActivePerUser { get; set; } = 4;
 
+        // A booking waiting for its payment result is kept this long after its hold ran out,
+        // so a payment made in time is not lost because the result arrived a moment late.
+        public int PaymentGraceSeconds { get; set; } = 30;
+
         // How often the background sweeper expires holds that ran out.
         public int SweepIntervalSeconds { get; set; } = 30;
     }

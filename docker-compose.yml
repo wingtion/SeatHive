@@ -38,6 +38,8 @@ services:
       context: .
       dockerfile: SeatHive.Worker/Dockerfile
     environment:
+      # The Worker keeps its message inbox and outbox in the "worker" schema of the same database.
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=seathivedb;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - RabbitMQ__HostName=rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}

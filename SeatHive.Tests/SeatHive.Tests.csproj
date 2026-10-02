@@ -24,6 +24,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SeatHive.Api\SeatHive.Api.csproj" />
     <ProjectReference Include="..\SeatHive.Shared\SeatHive.Shared.csproj" />
+    <ProjectReference Include="..\SeatHive.Worker\SeatHive.Worker.csproj" />
   </ItemGroup>
 
   <ItemGroup>

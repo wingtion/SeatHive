@@ -1,5 +1,6 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
 using Npgsql;
 using SeatHive.Api.Data;
@@ -8,6 +9,8 @@ using SeatHive.Shared.Events;
 
 namespace SeatHive.Api.Services
 {
+    // Every change of a booking and the event that announces it are written in one database transaction:
+    // the event goes to the outbox table and is sent to RabbitMQ after the commit.
     public class BookingService
     {
         private readonly AppDbContext _context;
@@ -32,6 +35,22 @@ namespace SeatHive.Api.Services
 
         private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
 
+        // Consumers already run inside the inbox transaction, which commits when the message is done.
+        // Everything else gets its own transaction; leaving it without a commit rolls everything back.
+        private async Task<IDbContextTransaction?> BeginTransactionAsync(CancellationToken cancellationToken = default)
+        {
+            return _context.Database.CurrentTransaction == null
+                ? await _context.Database.BeginTransactionAsync(cancellationToken)
+                : null;
+        }
+
+        // Stores the published events and, when the transaction is ours, commits it.
+        private async Task SaveAndCommitAsync(IDbContextTransaction? transaction, CancellationToken cancellationToken = default)
+        {
+            await _context.SaveChangesAsync(cancellationToken);
+            if (transaction != null) await transaction.CommitAsync(cancellationToken);
+        }
+
         public async Task<BookingResult> HoldSeatAsync(int seatId, int userId)
         {
             var now = UtcNow();
@@ -48,8 +67,7 @@ namespace SeatHive.Api.Services
             await using var lockHandle = await _lockService.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(10));
             if (lockHandle == null) return BookingResult.Failure(BookingError.SeatLocked);
 
-            // Leaving without a commit rolls everything back.
-            await using var transaction = await _context.Database.BeginTransactionAsync();
+            await using var transaction = await BeginTransactionAsync();
 
             // One hold at a time per user, so concurrent requests for different seats cannot pass the limit together.
             await _context.Database.ExecuteSqlAsync($"SELECT 1 FROM \"Users\" WHERE \"Id\" = {userId} FOR UPDATE");
@@ -57,25 +75,25 @@ namespace SeatHive.Api.Services
             if (!await _context.Seats.AnyAsync(s => s.Id == seatId))
                 return BookingResult.Failure(BookingError.SeatNotFound);
 
-            // Lazy expiry: a hold on this seat that ran out must stop counting as active,
+            // Lazy expiry: a booking on this seat that ran out must stop counting as active,
             // otherwise the unique index would reject the new hold.
-            await _context.Bookings
-                .Where(b => b.SeatId == seatId && b.Status == BookingStatus.Held && b.ExpiresAt <= now)
-                .ExecuteUpdateAsync(s => s.SetProperty(b => b.Status, BookingStatus.Expired));
+            await ExpireAsync(now, seatId);
 
             var active = await _context.Bookings.AsNoTracking().FirstOrDefaultAsync(b =>
-                b.SeatId == seatId && (b.Status == BookingStatus.Held || b.Status == BookingStatus.Confirmed));
+                b.SeatId == seatId
+                && (b.Status == BookingStatus.Held || b.Status == BookingStatus.PaymentPending || b.Status == BookingStatus.Confirmed));
             if (active != null)
             {
                 if (active.Status == BookingStatus.Confirmed) return BookingResult.Failure(BookingError.SeatAlreadyBooked);
                 if (active.UserId != userId) return BookingResult.Failure(BookingError.SeatHeld);
 
-                await transaction.CommitAsync();
                 return BookingResult.Unchanged(active);
             }
 
+            // A booking waiting for its payment still occupies a seat, so it counts as a hold.
             var activeHolds = await _context.Bookings.CountAsync(b =>
-                b.UserId == userId && b.Status == BookingStatus.Held && b.ExpiresAt > now);
+                b.UserId == userId
+                && ((b.Status == BookingStatus.Held && b.ExpiresAt > now) || b.Status == BookingStatus.PaymentPending));
             if (activeHolds >= _options.MaxActivePerUser) return BookingResult.Failure(BookingError.HoldLimitReached);
 
             var booking = new Booking
@@ -99,22 +117,26 @@ namespace SeatHive.Api.Services
                 return BookingResult.Failure(BookingError.SeatHeld);
             }
 
-            await transaction.CommitAsync();
+            await _publishEndpoint.Publish(new SeatHeld(booking.Id, seatId, userId, now, booking.ExpiresAt.Value));
+            await SaveAndCommitAsync(transaction);
 
             return BookingResult.Success(booking);
         }
 
-        // Confirms directly for now. The simulated payment will sit between the hold and this step.
-        public async Task<BookingResult> ConfirmAsync(int bookingId, int userId)
+        // Confirming a hold starts its payment. The booking becomes Confirmed when the payment result arrives.
+        public async Task<BookingResult> RequestPaymentAsync(int bookingId, int userId, bool forceFailure = false)
         {
             var now = UtcNow();
+            var paymentId = Guid.NewGuid();
+
+            await using var transaction = await BeginTransactionAsync();
 
             // One conditional update, so a confirm and an expiry of the same hold cannot both win.
             var updated = await _context.Bookings
                 .Where(b => b.Id == bookingId && b.UserId == userId && b.Status == BookingStatus.Held && b.ExpiresAt > now)
                 .ExecuteUpdateAsync(s => s
-                    .SetProperty(b => b.Status, BookingStatus.Confirmed)
-                    .SetProperty(b => b.ConfirmedAt, now));
+                    .SetProperty(b => b.Status, BookingStatus.PaymentPending)
+                    .SetProperty(b => b.PaymentId, paymentId));
 
             var booking = await _context.Bookings.AsNoTracking().FirstOrDefaultAsync(b => b.Id == bookingId);
 
@@ -126,28 +148,89 @@ namespace SeatHive.Api.Services
 
                 return booking.Status switch
                 {
-                    // Confirming twice is fine for the owner.
-                    BookingStatus.Confirmed => BookingResult.Unchanged(booking),
+                    // Confirming again is fine for the owner; it does not start a second payment.
+                    BookingStatus.PaymentPending or BookingStatus.Confirmed => BookingResult.Unchanged(booking),
                     BookingStatus.Released => BookingResult.Failure(BookingError.HoldNotActive),
                     // Expired, or still Held but out of time.
                     _ => BookingResult.Failure(BookingError.HoldExpired)
                 };
             }
 
-            // Publish event to rabbitmq
-            // using an anonymous object that matches the interface
-            await _publishEndpoint.Publish<BookingCreatedEvent>(new
-            {
-                booking!.SeatId,
-                booking.UserId,
-                CreatedAt = now
-            });
+            await _publishEndpoint.Publish(new PaymentRequested(booking!.Id, booking.SeatId, booking.UserId, now, paymentId, forceFailure));
+            await SaveAndCommitAsync(transaction);
 
             return BookingResult.Success(booking);
         }
 
+        // The payment went through: confirm the booking, or ask for a refund if it cannot be confirmed.
+        public async Task<BookingResult> CompletePaymentAsync(PaymentSucceeded payment)
+        {
+            var bookingId = payment.BookingId;
+            var paymentId = payment.PaymentId;
+            var now = UtcNow();
+
+            await using var transaction = await BeginTransactionAsync();
+
+            // There is no time condition: a booking waiting for its payment stays PaymentPending
+            // until the sweeper gives it up, and until then a payment made in time still counts.
+            var updated = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PaymentPending && b.PaymentId == paymentId)
+                .ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.Confirmed)
+                    .SetProperty(b => b.ConfirmedAt, now));
+
+            var booking = await _context.Bookings.AsNoTracking().FirstOrDefaultAsync(b => b.Id == bookingId);
+
+            if (updated == 1)
+            {
+                await _publishEndpoint.Publish(new BookingConfirmed(booking!.Id, booking.SeatId, booking.UserId, now, paymentId));
+                await SaveAndCommitAsync(transaction);
+
+                return BookingResult.Success(booking);
+            }
+
+            // The same result handled a second time: the booking is already confirmed with this payment.
+            if (booking != null && booking.Status == BookingStatus.Confirmed && booking.PaymentId == paymentId)
+                return BookingResult.Unchanged(booking);
+
+            // The money was taken and nothing was confirmed for it, so it always goes back.
+            // The booking may even be gone: resetting the demo data deletes bookings.
+            var error = booking == null ? BookingError.BookingNotFound
+                : booking.Status == BookingStatus.Expired ? BookingError.HoldExpired
+                : BookingError.HoldNotActive;
+            var reason = error switch
+            {
+                BookingError.BookingNotFound => ErrorCodes.BookingNotFound,
+                BookingError.HoldExpired => ErrorCodes.HoldExpired,
+                _ => ErrorCodes.HoldNotActive
+            };
+
+            // Seat and user come from the payment message, which is right even when the booking is not there.
+            await _publishEndpoint.Publish(new RefundRequested(bookingId, payment.SeatId, payment.UserId, now, paymentId, reason));
+            await SaveAndCommitAsync(transaction);
+
+            return BookingResult.Failure(error);
+        }
+
+        // The payment failed: the booking is a hold again and keeps its original deadline,
+        // so its owner can try again while the hold lasts.
+        public async Task<BookingResult> FailPaymentAsync(int bookingId, Guid paymentId)
+        {
+            var updated = await _context.Bookings
+                .Where(b => b.Id == bookingId && b.Status == BookingStatus.PaymentPending && b.PaymentId == paymentId)
+                .ExecuteUpdateAsync(s => s.SetProperty(b => b.Status, BookingStatus.Held));
+
+            var booking = await _context.Bookings.AsNoTracking().FirstOrDefaultAsync(b => b.Id == bookingId);
+            if (booking == null) return BookingResult.Failure(BookingError.BookingNotFound);
+
+            // Zero rows means the result is for an earlier attempt or arrived twice; there is nothing to undo.
+            return updated == 1 ? BookingResult.Success(booking) : BookingResult.Unchanged(booking);
+        }
+
         public async Task<BookingResult> ReleaseAsync(int bookingId, int userId)
         {
+            await using var transaction = await BeginTransactionAsync();
+
             var updated = await _context.Bookings
                 .Where(b => b.Id == bookingId && b.UserId == userId && b.Status == BookingStatus.Held)
                 .ExecuteUpdateAsync(s => s.SetProperty(b => b.Status, BookingStatus.Released));
@@ -156,19 +239,61 @@ namespace SeatHive.Api.Services
 
             if (booking == null) return BookingResult.Failure(BookingError.BookingNotFound);
             if (booking.UserId != userId) return BookingResult.Failure(BookingError.NotHoldOwner);
-            if (updated == 0) return BookingResult.Failure(BookingError.HoldNotActive);
+            if (updated == 0)
+            {
+                return BookingResult.Failure(booking.Status == BookingStatus.PaymentPending
+                    ? BookingError.PaymentInProgress
+                    : BookingError.HoldNotActive);
+            }
+
+            await _publishEndpoint.Publish(new HoldReleased(booking.Id, booking.SeatId, booking.UserId, UtcNow()));
+            await SaveAndCommitAsync(transaction);
 
             return BookingResult.Success(booking);
         }
 
-        // Marks every hold that ran out as Expired and returns how many there were.
+        // Marks every booking that ran out as Expired and returns how many there were.
         public async Task<int> ExpireDueHoldsAsync(CancellationToken cancellationToken = default)
         {
-            var now = UtcNow();
+            await using var transaction = await BeginTransactionAsync(cancellationToken);
 
-            return await _context.Bookings
-                .Where(b => b.Status == BookingStatus.Held && b.ExpiresAt <= now)
-                .ExecuteUpdateAsync(s => s.SetProperty(b => b.Status, BookingStatus.Expired), cancellationToken);
+            var expired = await ExpireAsync(UtcNow(), seatId: null, cancellationToken);
+            await SaveAndCommitAsync(transaction, cancellationToken);
+
+            return expired;
+        }
+
+        // Expires what ran out, for one seat or for all, and announces each one.
+        // A hold runs out at ExpiresAt. A booking waiting for its payment result gets the grace period on top.
+        private async Task<int> ExpireAsync(DateTime now, int? seatId, CancellationToken cancellationToken = default)
+        {
+            var paymentCutoff = now.AddSeconds(-_options.PaymentGraceSeconds);
+
+            // UPDATE ... RETURNING changes and reads the rows in one statement,
+            // so each booking is expired, and announced, by exactly one caller.
+            var query = seatId == null
+                ? _context.Bookings.FromSql($"""
+                    UPDATE "Bookings" SET "Status" = 'Expired'
+                    WHERE ("Status" = 'Held' AND "ExpiresAt" <= {now})
+                       OR ("Status" = 'PaymentPending' AND "ExpiresAt" <= {paymentCutoff})
+                    RETURNING *
+                    """)
+                : _context.Bookings.FromSql($"""
+                    UPDATE "Bookings" SET "Status" = 'Expired'
+                    WHERE "SeatId" = {seatId.Value}
+                      AND (("Status" = 'Held' AND "ExpiresAt" <= {now})
+                        OR ("Status" = 'PaymentPending' AND "ExpiresAt" <= {paymentCutoff}))
+                    RETURNING *
+                    """);
+
+            var expired = await query.AsNoTracking().ToListAsync(cancellationToken);
+
+            foreach (var booking in expired)
+            {
+                await _publishEndpoint.Publish(new HoldExpired(booking.Id, booking.SeatId, booking.UserId, now), cancellationToken);
+            }
+
+            return expired.Count;
         }
     }
 }
