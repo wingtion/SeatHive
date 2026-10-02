@@ -1,4 +1,5 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 using SeatHive.Api.Data;
 using SeatHive.Api.Models;
 
@@ -20,7 +21,7 @@ namespace SeatHive.Api.Controllers
         {
             // 1. Reset Database (Optional: clears everything first)
             _context.Database.EnsureDeleted();
-            _context.Database.EnsureCreated();
+            _context.Database.Migrate();
 
             // 2. Create Event
             var concert = new Event

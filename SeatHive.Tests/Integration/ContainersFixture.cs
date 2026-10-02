@@ -24,7 +24,7 @@ namespace SeatHive.Tests.Integration
             Redis = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
 
             await using var db = CreateContext();
-            await db.Database.EnsureCreatedAsync();
+            await db.Database.MigrateAsync();
         }
 
         public async Task DisposeAsync()

@@ -15,9 +15,12 @@ services:
     ports:
       - "8080:8080" 
     depends_on:
-      - postgres
-      - redis
-      - rabbitmq
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
   # 2. Worker Service (Background Console App)
   worker:
@@ -29,8 +32,10 @@ services:
       - RabbitMQ__HostName=rabbitmq
       - ConnectionStrings__DefaultConnection=Host=postgres;Database=seathivedb;Username=postgres;Password=password
     depends_on:
-      - rabbitmq
-      - postgres
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
 
   # 3. PostgreSQL Database
   postgres:
@@ -44,6 +49,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d seathivedb"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # 4. Redis Cache
   redis:
@@ -51,6 +61,11 @@ services:
     container_name: seathive_redis
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   # 5. RabbitMQ Queue
   rabbitmq:
@@ -62,6 +77,11 @@ services:
     environment:
       RABBITMQ_DEFAULT_USER: guest
       RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
 
 volumes:
   postgres_data:
