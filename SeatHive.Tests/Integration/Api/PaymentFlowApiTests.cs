@@ -177,17 +177,19 @@ namespace SeatHive.Tests.Integration.Api
 
             await DeliveredAsync<BookingConfirmed>(booking.Id, e => e.BookingId);
 
-            // The inbox keeps one row for the message and counts how often it arrived.
-            // Once it has seen both deliveries, the second one is done as well.
+            // The inbox keeps one row for the message per consumer that gets it (the one that confirms the booking
+            // and the one that writes the history) and counts how often it arrived.
+            // Once each has seen both deliveries, the second one is done as well.
+            const int consumers = 2;
             var deadline = DateTime.UtcNow.AddSeconds(10);
             while (true)
             {
                 await using var db = _fixture.CreateContext();
                 var inbox = await db.Set<MassTransit.EntityFrameworkCoreIntegration.InboxState>()
                     .AsNoTracking().Where(i => i.MessageId == messageId).ToListAsync();
-                if (inbox.Count == 1 && inbox.All(i => i.ReceiveCount >= 2)) break;
+                if (inbox.Count == consumers && inbox.All(i => i.ReceiveCount >= 2)) break;
 
-                Assert.True(DateTime.UtcNow < deadline, $"Receive counts: [{string.Join(",", inbox.Select(i => i.ReceiveCount))}], expected one row with at least 2.");
+                Assert.True(DateTime.UtcNow < deadline, $"Receive counts: [{string.Join(",", inbox.Select(i => i.ReceiveCount))}], expected {consumers} rows with at least 2 each.");
                 await Task.Delay(20);
             }
 

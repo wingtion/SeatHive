@@ -15,6 +15,7 @@ namespace SeatHive.Api.Data
         public DbSet<Seat> Seats { get; set; }
         public DbSet<User> Users { get; set; }
         public DbSet<Booking> Bookings { get; set; }
+        public DbSet<BookingEvent> BookingEvents { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -44,6 +45,18 @@ namespace SeatHive.Api.Data
                     .WithMany()
                     .HasForeignKey(b => b.UserId)
                     .OnDelete(DeleteBehavior.Restrict);
+            });
+
+            modelBuilder.Entity<BookingEvent>(bookingEvent =>
+            {
+                bookingEvent.HasKey(e => e.Sequence);
+                bookingEvent.Property(e => e.Type).HasConversion<string>();
+
+                // An event that is delivered twice is recorded once.
+                bookingEvent.HasIndex(e => e.EventId).IsUnique();
+
+                // The history of one booking, in the order it happened.
+                bookingEvent.HasIndex(e => new { e.BookingId, e.OccurredAt });
             });
 
             // MassTransit transactional outbox and inbox: events are stored in the same transaction

@@ -65,6 +65,7 @@ namespace SeatHive.Tests.Integration.Api
             configurator.AddRecorder<RefundRequested>();
             configurator.AddRecorder<RefundCompleted>();
             configurator.AddRecorder<NotificationSent>();
+            configurator.AddRecorder<DemoDataReset>();
         }
 
         // On an endpoint of its own. By default the recorder for PaymentSucceeded would get the same endpoint name

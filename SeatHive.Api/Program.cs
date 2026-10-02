@@ -76,6 +76,7 @@ builder.Services.AddMassTransit(x =>
 {
     x.AddConsumer<PaymentSucceededConsumer, InboxConsumerDefinition<PaymentSucceededConsumer>>();
     x.AddConsumer<PaymentFailedConsumer, InboxConsumerDefinition<PaymentFailedConsumer>>();
+    x.AddConsumer<BookingHistoryConsumer, BookingHistoryConsumerDefinition>();
 
     x.AddBookingOutbox(builder.Configuration);
 
@@ -121,6 +122,7 @@ builder.Services.AddScoped<SeatHive.Api.Services.BookingService>();
 builder.Services.AddScoped<SeatHive.Api.Services.IRedisLockService, SeatHive.Api.Services.RedisLockService>();
 builder.Services.AddScoped<SeatHive.Api.Services.AuthService>();
 builder.Services.AddScoped<SeatStatusQuery>();
+builder.Services.AddScoped<BookingHistory>();
 
 // Hold timing goes through TimeProvider so tests can move the clock.
 builder.Services.AddSingleton(TimeProvider.System);

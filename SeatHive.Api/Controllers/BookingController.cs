@@ -17,11 +17,13 @@ namespace SeatHive.Api.Controllers
     {
         private readonly BookingService _bookingService;
         private readonly AppDbContext _context;
+        private readonly BookingHistory _history;
 
-        public BookingController(BookingService bookingService, AppDbContext context)
+        public BookingController(BookingService bookingService, AppDbContext context, BookingHistory history)
         {
             _bookingService = bookingService;
             _context = context;
+            _history = history;
         }
 
         // The bookings of the user in the token, newest first. Nobody can list another user's bookings.
@@ -54,6 +56,19 @@ namespace SeatHive.Api.Controllers
             if (denied != null) return denied;
 
             return Ok(await ToResponse(_context.Bookings.AsNoTracking().Where(b => b.Id == id)).SingleAsync(cancellationToken));
+        }
+
+        // What happened to the booking, in the order it happened. The same rule as the booking itself: owner only.
+        [HttpGet("{id:int}/history")]
+        [EnableRateLimiting(RateLimitPolicies.Read)]
+        public async Task<IActionResult> History(int id, [FromQuery] PageQuery query, CancellationToken cancellationToken)
+        {
+            if (!User.TryGetUserId(out var userId)) return InvalidToken();
+
+            var denied = await CheckOwnerAsync(id, userId, cancellationToken);
+            if (denied != null) return denied;
+
+            return Ok(await _history.ForBookingAsync(id, query.Page, query.PageSize, cancellationToken));
         }
 
         // Null when the booking exists and belongs to the user; otherwise the error to return.
