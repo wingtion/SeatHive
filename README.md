@@ -1,5 +1,7 @@
 # SeatHive - Ticket Booking Backend
 
+[![CI](https://github.com/wingtion/SeatHive/actions/workflows/ci.yml/badge.svg)](https://github.com/wingtion/SeatHive/actions/workflows/ci.yml)
+
 SeatHive is a .NET backend for booking event seats. Its main job is to make sure that when many requests try to book the same seat at the same time, exactly one of them gets it.
 
 This is a portfolio project. It is not deployed anywhere yet; see the [Roadmap](#roadmap) for what is still missing.
