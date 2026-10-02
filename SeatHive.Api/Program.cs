@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using SeatHive.Api.Consumers;
 using SeatHive.Api.Data;
+using SeatHive.Api.Hubs;
 using SeatHive.Api.Services;
 using StackExchange.Redis;
 using System.Text;
@@ -77,6 +78,9 @@ builder.Services.AddMassTransit(x =>
     x.AddConsumer<PaymentSucceededConsumer, InboxConsumerDefinition<PaymentSucceededConsumer>>();
     x.AddConsumer<PaymentFailedConsumer, InboxConsumerDefinition<PaymentFailedConsumer>>();
     x.AddConsumer<BookingHistoryConsumer, BookingHistoryConsumerDefinition>();
+    // Live updates: what the hub sends starts here, when an event arrives from the bus, never in the request.
+    x.AddConsumer<SeatStatusBroadcaster, SeatStatusBroadcasterDefinition>();
+    x.AddConsumer<BookingLiveNotifier, BookingLiveNotifierDefinition>();
 
     x.AddBookingOutbox(builder.Configuration);
 
@@ -124,6 +128,12 @@ builder.Services.AddScoped<SeatHive.Api.Services.AuthService>();
 builder.Services.AddScoped<SeatStatusQuery>();
 builder.Services.AddScoped<BookingHistory>();
 
+builder.Services.AddSignalR()
+    // The same JSON as the HTTP API: camelCase names, enums as camelCase strings.
+    .AddJsonProtocol(options => options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)));
+// "The user" of a hub connection is the user id in the token.
+builder.Services.AddSingleton<Microsoft.AspNetCore.SignalR.IUserIdProvider, SubUserIdProvider>();
+
 // Hold timing goes through TimeProvider so tests can move the clock.
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<HoldOptions>(builder.Configuration.GetSection(HoldOptions.SectionName));
@@ -145,6 +155,23 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
             NameClaimType = "sub",
             RoleClaimType = "role"
+        };
+
+        // A browser cannot set the Authorization header on a WebSocket, so the SignalR client sends the token
+        // as the "access_token" query parameter. It is read from there for the hub only: everywhere else
+        // a token in the address is ignored, as before.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var token = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(token) && context.HttpContext.Request.Path.StartsWithSegments(SeatHub.Path))
+                {
+                    context.Token = token;
+                }
+
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -223,5 +250,8 @@ app.UseAuthorization();
 app.UseRateLimiter();
 
 app.MapControllers();
+
+// A connection is closed when its token runs out, instead of living on for as long as it stays open.
+app.MapHub<SeatHub>(SeatHub.Path, options => options.CloseOnAuthenticationExpiration = true);
 
 app.Run();

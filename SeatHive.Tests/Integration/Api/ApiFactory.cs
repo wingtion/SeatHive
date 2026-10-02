@@ -8,6 +8,8 @@ using MassTransit;
 using MassTransit.Testing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Connections;
+using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -203,6 +205,12 @@ namespace SeatHive.Tests.Integration.Api
         // the password twice, which costs about a quarter of a second per user; SignInAsUserAsync does that for real.
         public async Task<HttpClient> CreateUserClientAsync(string? email = null)
         {
+            return (await CreateUserAsync(email)).Client;
+        }
+
+        // The same, for tests that also need the token itself (to connect to the hub) or the user's id.
+        public async Task<(HttpClient Client, string Token, int UserId)> CreateUserAsync(string? email = null)
+        {
             email ??= UniqueEmail();
             var client = CreateClient();
 
@@ -211,7 +219,22 @@ namespace SeatHive.Tests.Integration.Api
             db.Users.Add(user);
             await db.SaveChangesAsync();
 
-            return Authorize(client, CreateToken(user));
+            var token = CreateToken(user);
+            return (Authorize(client, token), token, user.Id);
+        }
+
+        // A connection to the seat hub of this host. token null: no token is sent.
+        // The test server has no sockets, so the connection uses long polling over the in-memory handler.
+        public HubConnection CreateHubConnection(string? token)
+        {
+            return new HubConnectionBuilder()
+                .WithUrl(new Uri(Server.BaseAddress, "/hubs/seats"), options =>
+                {
+                    options.HttpMessageHandlerFactory = _ => Server.CreateHandler();
+                    options.Transports = HttpTransportType.LongPolling;
+                    if (token != null) options.AccessTokenProvider = () => Task.FromResult<string?>(token);
+                })
+                .Build();
         }
 
         // A client for the admin the API seeded at startup, with a token signed with the test key.

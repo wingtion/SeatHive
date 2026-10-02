@@ -55,6 +55,15 @@ Two services and a shared contract library:
     *   The order is the time the event itself carries (`occurredAt`), not the time it was recorded. Events with the same timestamp follow the life cycle of a booking (a request before its result), and after that the `sequence` number, which is the order of recording. The API and the Worker each use their own clock; on one machine that is the same clock.
     *   Payments, refunds and notifications are marked `"simulated": true`.
     *   The history lags behind the change by the delivery delay of the outbox (about a second). Only the owner can read it, like the booking itself.
+*   **Live Updates:** A SignalR hub at `/hubs/seats` sends three messages. Clients only listen; nothing sent to the hub changes a booking.
+    *   `seatStatusChanged` `{ eventId, seatId, status, heldUntil }` goes to everyone watching an event (call `JoinEvent(eventId)`, and `LeaveEvent(eventId)` to stop). Like the seat endpoint, it never says who holds a seat.
+    *   `bookingEvent` goes to the owner of a booking, on all their connections, for every event of the booking. It has the fields of a history item plus `bookingId`, and the same `eventId`, so a client can merge the two.
+    *   `demoDataReset` goes to everyone when the demo data was reset: read everything again.
+    *   Nothing is sent from the request that made the change. Every message starts as an event in the outbox and is sent when that event comes back over the bus, so a change that was rolled back is never announced. Updates therefore follow the change by the delivery delay of the outbox (about a second).
+    *   A seat update does not repeat what the event said: it reads the seat's current state and sends that, one update at a time, so an event that arrives late, out of order or twice cannot announce a state the seat is no longer in. A `bookingEvent` may be sent again after a failure; its `eventId` tells a client it has it already.
+    *   A hold that runs out is announced when the sweeper marks it (every 5 seconds); until then a client can count down `heldUntil` itself.
+    *   The hub needs a token. A browser cannot set a header on a WebSocket, so the SignalR client sends the token as the `access_token` query parameter; it is accepted there for the hub only. A connection is closed when its token runs out. Joining is only possible for an event that exists.
+    *   One API instance is assumed. With several, each event would reach only one of them (they would share the queue), and clients connected to the others would miss it; that needs a SignalR backplane (Redis) first.
 *   **Rate Limiting:** Register and login are limited to 10 requests per minute per IP address, the booking endpoints (hold, confirm and release together) to 30 requests per minute per user, and the read endpoints to 120 requests per minute per user (per IP address without a token), counted separately so reading never uses up the booking limit. Requests over the limit get `429`.
 *   **Behind a Reverse Proxy:** The limits per IP address need the client's address. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only when the request comes from a configured proxy (`ReverseProxy:TrustedProxies`, addresses or networks), and only the last hop counts. With nothing configured they are ignored. Docker Compose gives its network a fixed subnet and trusts that subnet.
 *   **Configuration:** Secrets (JWT key, database, Redis and RabbitMQ credentials) are not in the repository. The API and the Worker do not start if one is missing.
@@ -92,9 +101,9 @@ sequenceDiagram
     end
 ```
 
-Releasing a hold publishes `HoldReleased`, and a hold that runs out publishes `HoldExpired`. Resetting the demo data publishes `DemoDataReset`, which has no consumer yet.
+Releasing a hold publishes `HoldReleased`, and a hold that runs out publishes `HoldExpired`. Resetting the demo data publishes `DemoDataReset`.
 
-The API also consumes every booking event itself, on a queue of its own (`booking-history`), and writes it into the booking's history.
+The API also consumes the booking events itself, on three queues of its own: `booking-history` writes each event into the booking's history, `seat-status-broadcast` tells everyone watching the event that the seat changed, and `booking-live` tells the booking's owner.
 
 ## Tech Stack
 
@@ -151,6 +160,14 @@ Settings:
 *   API, `ReverseProxy:TrustedProxies`: a list of addresses or networks; empty by default. Docker Compose sets it to the subnet of its network (`COMPOSE_SUBNET` in `.env`, `172.28.0.0/24` by default).
 *   Worker, section `Payment`: `FailureRate` (0.2), `MinDelayMs` (1000), `MaxDelayMs` (3000), `ChargeRetentionDays` (7) and `CleanupIntervalMinutes` (60).
 
+## Deployment Notes
+
+Nothing is deployed yet. What a deployment behind a reverse proxy (Caddy) has to take care of:
+
+*   **Mask the token in access logs.** A WebSocket connection to the hub carries the JWT in the address (`/hubs/seats?access_token=...`). A reverse proxy that logs request addresses writes those tokens into its log, where they stay valid for up to 2 hours. Configure the proxy's log to drop or replace the `access_token` query parameter before the hub is reachable from outside.
+*   **Put the proxy in the compose network and do not publish the API's port.** The API believes `X-Forwarded-For` from the compose subnet only. The whole subnet is trusted, so every container in it could send that header; give the proxy a fixed address and narrow `ReverseProxy:TrustedProxies` to it.
+*   **One API instance.** See Live Updates above for why more need a backplane.
+
 ## Concurrency Simulation
 
 `POST /api/simulation/simulate-concurrency` (Admin only) starts 20 concurrent attempts to hold Seat #1 and reports how many of them took the seat. The expected result is 1 success and 19 failures.
@@ -187,6 +204,7 @@ There are no unit tests: every test needs Docker.
 *   **Concurrency (Testcontainers):** 20 concurrent users holding the same seat, repeated for 25 rounds, must produce exactly one hold each round. One user holding 10 seats at once must end up with exactly 4. A confirm racing the sweeper, and a payment result racing the sweeper, must each end in one outcome, never mixed. Further tests check that a lock can only be released by its owner, and that the database rejects a second active booking for the same seat even with the lock disabled.
 *   **Authorization and API (WebApplicationFactory):** the real API runs in-process and is checked for role access (401/403), status codes and error codes, validation (400), duplicate emails, rate limiting (429), startup configuration, and that a reset of the demo data does not reuse booking ids.
 *   **Read endpoints (WebApplicationFactory):** events and seats are readable without a token; a seat follows its booking (`available`, `held`, `booked`, also for a hold that ran out and was not swept yet); the seat response has exactly its six fields and nothing about the holder; paging limits are rejected with `400`; a booking is `403` for another user and for an admin; reads have their own rate limit.
+*   **Live updates (API and Worker consumers on one in-memory bus, a SignalR client over long polling):** connecting without a token or with an expired one is rejected; a token in the query string is accepted by the hub and nowhere else; joining an event that does not exist is rejected; a watcher of an event sees a seat become held, available and booked, and available again when the hold runs out; the seat message has exactly its four fields; watchers of another event, of nothing, or who left get nothing; a rolled back change is not announced; the owner gets every event of the booking on all connections and another user gets none; a reset reaches every connection. The WebSocket transport itself and closing a connection when its token runs out are not covered by a test.
 *   **Booking history (API and Worker consumers on one in-memory bus):** a successful booking, a failed payment with a retry, a release, an expiry and a refund each leave their events in order; an event that happened earlier but arrived later is listed earlier; the same event delivered twice, or again after the inbox forgot it, is one row; when marking the message as consumed fails, the row is rolled back with it; a rolled back change leaves no row; another user and an admin get `403`.
 *   **Forwarded headers:** behind a trusted proxy each client address gets its own limit; a forwarded address from anyone else, or one a client put in front of the proxy's, is ignored.
 *   **Swagger:** the document is served in Development only, and only the endpoints that need a token are marked with the bearer scheme.
@@ -201,9 +219,9 @@ Done:
 *   [x] Transactional outbox and inbox.
 *   [x] Read endpoints for events, seats and bookings.
 *   [x] The event history of a booking.
+*   [x] Live updates with SignalR.
 
 Not implemented yet:
 
 *   [ ] CORS for a browser front end.
-*   [ ] Live updates with SignalR.
-*   [ ] A hosted live demo.
+*   [ ] A hosted live demo behind a reverse proxy (see the deployment notes).

@@ -249,6 +249,7 @@ namespace SeatHive.Tests.Integration
         // API and Worker together, on databases and hosts of their own.
         public const string History = "Api and Worker: history";
         public const string EndToEnd = "Api and Worker: end to end";
+        public const string Live = "Api and Worker: live updates";
         // The booking service on the database, without an API host.
         public const string HoldService = "Service: holds";
         public const string PaymentService = "Service: payments";
@@ -263,6 +264,9 @@ namespace SeatHive.Tests.Integration
 
         [CollectionDefinition(History)]
         public class HistoryCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(Live)]
+        public class LiveCollection : ICollectionFixture<ContainersFixture> { }
 
         [CollectionDefinition(EndToEnd)]
         public class EndToEndCollection : ICollectionFixture<ContainersFixture> { }

@@ -2,6 +2,7 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using SeatHive.Api.Data;
 using SeatHive.Api.Models;
+using SeatHive.Api.Services;
 using SeatHive.Shared.Events;
 
 namespace SeatHive.Api.Consumers
@@ -28,82 +29,21 @@ namespace SeatHive.Api.Consumers
             _context = context;
         }
 
-        public Task Consume(ConsumeContext<SeatHeld> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.SeatHeld, m.BookingId, m.SeatId, m.UserId, m.OccurredAt);
-        }
+        public Task Consume(ConsumeContext<SeatHeld> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<HoldReleased> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<HoldExpired> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<PaymentRequested> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<PaymentSucceeded> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<PaymentFailed> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<BookingConfirmed> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<RefundRequested> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<RefundCompleted> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<RefundFailed> context) => RecordAsync(context, BookingEventData.From(context.Message));
+        public Task Consume(ConsumeContext<NotificationSent> context) => RecordAsync(context, BookingEventData.From(context.Message));
 
-        public Task Consume(ConsumeContext<HoldReleased> context)
+        private async Task RecordAsync(ConsumeContext context, BookingEventData data)
         {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.HoldReleased, m.BookingId, m.SeatId, m.UserId, m.OccurredAt);
-        }
-
-        public Task Consume(ConsumeContext<HoldExpired> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.HoldExpired, m.BookingId, m.SeatId, m.UserId, m.OccurredAt);
-        }
-
-        public Task Consume(ConsumeContext<PaymentRequested> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.PaymentRequested, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId);
-        }
-
-        public Task Consume(ConsumeContext<PaymentSucceeded> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.PaymentSucceeded, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId);
-        }
-
-        public Task Consume(ConsumeContext<PaymentFailed> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.PaymentFailed, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId, m.Reason);
-        }
-
-        public Task Consume(ConsumeContext<BookingConfirmed> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.BookingConfirmed, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId);
-        }
-
-        public Task Consume(ConsumeContext<RefundRequested> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.RefundRequested, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId, m.Reason);
-        }
-
-        public Task Consume(ConsumeContext<RefundCompleted> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.RefundCompleted, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId);
-        }
-
-        public Task Consume(ConsumeContext<RefundFailed> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.RefundFailed, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId, m.Reason);
-        }
-
-        public Task Consume(ConsumeContext<NotificationSent> context)
-        {
-            var m = context.Message;
-            return RecordAsync(context, BookingEventType.NotificationSent, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, detail: m.Channel);
-        }
-
-        private async Task RecordAsync(
-            ConsumeContext context,
-            BookingEventType type,
-            int bookingId,
-            int seatId,
-            int userId,
-            DateTime occurredAt,
-            Guid? paymentId = null,
-            string? detail = null)
-        {
+            var (type, bookingId, seatId, userId, occurredAt, paymentId, detail) = data;
             var eventId = context.MessageId
                 ?? throw new InvalidOperationException($"A {type} event arrived without a message id and cannot be recorded.");
             var typeName = type.ToString();

@@ -58,7 +58,12 @@ namespace SeatHive.Tests.Integration.Api
             return paymentId;
         }
 
-        public Task InitializeAsync() => MigrateWorkerAsync(Database);
+        public async Task InitializeAsync()
+        {
+            await MigrateWorkerAsync(Database);
+            // Starts the host, which creates the API's tables: tests may write to the database before their first request.
+            Api.CreateClient().Dispose();
+        }
 
         public async Task DisposeAsync() => await Api.DisposeAsync();
     }
@@ -73,6 +78,13 @@ namespace SeatHive.Tests.Integration.Api
     public sealed class EndToEndHost : ApiWithWorkerHost
     {
         public EndToEndHost(ContainersFixture fixture) : base(fixture, "seathive_e2e")
+        {
+        }
+    }
+
+    public sealed class LiveHost : ApiWithWorkerHost
+    {
+        public LiveHost(ContainersFixture fixture) : base(fixture, "seathive_live")
         {
         }
     }
