@@ -10,7 +10,8 @@ using SeatHive.Shared.Events;
 
 namespace SeatHive.Tests.Integration
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.HoldService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class DbGuardTests
     {
         private readonly ContainersFixture _fixture;

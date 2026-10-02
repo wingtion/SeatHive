@@ -4,23 +4,43 @@ using System.Text.Json;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
-    public class SwaggerTests
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
+    public class SwaggerTests : IClassFixture<SwaggerTests.DevelopmentHost>
     {
         private const string DocumentUrl = "/swagger/v1/swagger.json";
 
         private readonly ContainersFixture _fixture;
+        private readonly ApiFactory _development;
 
-        public SwaggerTests(ContainersFixture fixture)
+        // The API in the Development environment, started once for the class. It has a database of its own,
+        // so it does not take events out of the outbox of the collection's host while it runs.
+        public sealed class DevelopmentHost : IAsyncLifetime
+        {
+            public DevelopmentHost(ContainersFixture fixture)
+            {
+                Api = new ApiFactory(
+                    fixture,
+                    new Dictionary<string, string?> { ["ConnectionStrings__DefaultConnection"] = fixture.GetPostgresConnectionString("seathive_swagger") },
+                    environment: "Development");
+            }
+
+            public ApiFactory Api { get; }
+
+            public Task InitializeAsync() => Task.CompletedTask;
+
+            public async Task DisposeAsync() => await Api.DisposeAsync();
+        }
+
+        public SwaggerTests(ContainersFixture fixture, DevelopmentHost development)
         {
             _fixture = fixture;
+            _development = development.Api;
         }
 
         private async Task<JsonElement> ReadDocumentAsync()
         {
-            await using var api = new ApiFactory(_fixture, environment: "Development");
-
-            var response = await api.CreateClient().GetAsync(DocumentUrl);
+            var response = await _development.CreateClient().GetAsync(DocumentUrl);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
 
             return await response.Content.ReadFromJsonAsync<JsonElement>();

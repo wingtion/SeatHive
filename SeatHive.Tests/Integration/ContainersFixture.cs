@@ -16,25 +16,55 @@ using Testcontainers.Redis;
 
 namespace SeatHive.Tests.Integration
 {
-    // Starts one real Postgres and one real Redis for all integration tests.
+    // One real Postgres and one real Redis for the whole test run, started once, by whoever needs them first.
+    // They are not stopped here: Testcontainers removes them when the test process ends.
+    public static class SharedContainers
+    {
+        // Test collections run in parallel and each keeps its own connections, so the server allows more than its default 100.
+        private static readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:16-alpine")
+            .WithCommand("-c", "max_connections=400")
+            .Build();
+
+        private static readonly RedisContainer Redis = new RedisBuilder("redis:alpine").Build();
+
+        private static readonly Lazy<Task> Started = new(() => Task.WhenAll(Postgres.StartAsync(), Redis.StartAsync()));
+
+        private static int _fixtures;
+
+        public static Task StartAsync() => Started.Value;
+
+        public static string PostgresConnectionString => Postgres.GetConnectionString();
+
+        public static string RedisConnectionString => Redis.GetConnectionString();
+
+        // A number for each fixture, which names its database and picks its Redis database.
+        public static int NextFixtureNumber() => Interlocked.Increment(ref _fixtures);
+    }
+
+    // What one test collection works on: a database of its own on the shared Postgres server and a Redis database
+    // of its own on the shared Redis. Collections run in parallel, and they must not see each other's data:
+    // a reset of the demo data empties the tables, seat ids (and with them the lock keys) start at 1 in every database,
+    // and an API host delivers whatever it finds in the outbox table of its database.
     public class ContainersFixture : IAsyncLifetime
     {
-        private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16-alpine").Build();
-
-        private readonly RedisContainer _redis = new RedisBuilder("redis:alpine").Build();
+        private int _number;
+        private string _database = null!;
 
         public IConnectionMultiplexer Redis { get; private set; } = null!;
 
-        public string RedisConnectionString => _redis.GetConnectionString();
+        public string RedisConnectionString => $"{SharedContainers.RedisConnectionString},defaultDatabase={_number}";
 
-        // The API under test, wired to the containers above.
+        // The API under test, wired to this fixture's databases. It starts when a test first uses it.
         public ApiFactory Api { get; private set; } = null!;
 
         public async Task InitializeAsync()
         {
-            await Task.WhenAll(_postgres.StartAsync(), _redis.StartAsync());
+            await SharedContainers.StartAsync();
 
-            Redis = await ConnectionMultiplexer.ConnectAsync(_redis.GetConnectionString());
+            _number = SharedContainers.NextFixtureNumber();
+            _database = $"seathive_tests_{_number}";
+
+            Redis = await ConnectionMultiplexer.ConnectAsync(RedisConnectionString);
 
             await using var db = CreateContext();
             await db.Database.MigrateAsync();
@@ -46,15 +76,15 @@ namespace SeatHive.Tests.Integration
         {
             await Api.DisposeAsync();
             await Redis.DisposeAsync();
-            await _postgres.DisposeAsync();
-            await _redis.DisposeAsync();
         }
 
-        // Connection string for the default test database, or for another database on the same server.
+        // Connection string for this fixture's database, or for another database on the same server.
         public string GetPostgresConnectionString(string? database = null)
         {
-            var builder = new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString());
-            if (database != null) builder.Database = database;
+            var builder = new NpgsqlConnectionStringBuilder(SharedContainers.PostgresConnectionString)
+            {
+                Database = database ?? _database
+            };
             return builder.ConnectionString;
         }
 
@@ -207,9 +237,56 @@ namespace SeatHive.Tests.Integration
         }
     }
 
-    [CollectionDefinition(Name)]
-    public class ContainersCollection : ICollectionFixture<ContainersFixture>
+    // The test collections. Tests inside one collection run one after the other and share a fixture, which means
+    // a database; different collections run in parallel, each on its own. A class goes where the classes are
+    // that it may share a database with.
+    public static class TestCollections
     {
-        public const string Name = "Containers";
+        // API tests on the fixture's host that hold, pay and reset.
+        public const string ApiBooking = "Api: booking";
+        // API tests that read, sign in, or start short-lived hosts of their own.
+        public const string ApiRead = "Api: read and access";
+        // API and Worker together, on databases and hosts of their own.
+        public const string History = "Api and Worker: history";
+        public const string EndToEnd = "Api and Worker: end to end";
+        // The booking service on the database, without an API host.
+        public const string HoldService = "Service: holds";
+        public const string PaymentService = "Service: payments";
+        // The Worker's consumers and provider.
+        public const string Worker = "Worker";
+
+        [CollectionDefinition(ApiBooking)]
+        public class ApiBookingCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(ApiRead)]
+        public class ApiReadCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(History)]
+        public class HistoryCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(EndToEnd)]
+        public class EndToEndCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(HoldService)]
+        public class HoldServiceCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(PaymentService)]
+        public class PaymentServiceCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(Worker)]
+        public class WorkerCollection : ICollectionFixture<ContainersFixture> { }
+    }
+
+    // What a test needs to run, for --filter "Category=...". Every test needs Docker; none is a unit test.
+    public static class TestCategories
+    {
+        public const string Trait = "Category";
+
+        // A service or the schema on the real database, no API host.
+        public const string Integration = "Integration";
+        // The API in-process, over HTTP.
+        public const string Api = "Api";
+        // The API and the Worker's consumers together.
+        public const string EndToEnd = "E2E";
     }
 }

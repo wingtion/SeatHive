@@ -9,7 +9,8 @@ using SeatHive.Worker.Payments;
 namespace SeatHive.Tests.Integration
 {
     // The simulated provider forgets charges after the retention period. Time only moves when a test moves it.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.Worker)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class SimulatedChargeRetentionTests
     {
         private static readonly DateTimeOffset Now = new(2026, 6, 1, 12, 0, 0, TimeSpan.Zero);

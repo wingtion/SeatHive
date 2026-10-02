@@ -4,7 +4,8 @@ namespace SeatHive.Tests.Integration.Api
 {
     // Behind the reverse proxy every request arrives from the address of the proxy. The limit per IP address only
     // works when the address of the client is taken from X-Forwarded-For, and only when a trusted proxy sent it.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class ForwardedHeadersTests
     {
         private const int Limit = 3;

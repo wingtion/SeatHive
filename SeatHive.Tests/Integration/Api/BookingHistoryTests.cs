@@ -13,35 +13,21 @@ namespace SeatHive.Tests.Integration.Api
     // The history of a booking is what really happened to it: every row comes from an event that went through
     // the outbox and the bus. The API and the Worker's consumers run together here, so nothing is made up by hand
     // except where a test says so.
-    [Collection(ContainersCollection.Name)]
-    public class BookingHistoryTests : IAsyncLifetime
+    [Collection(TestCollections.History)]
+    [Trait(TestCategories.Trait, TestCategories.EndToEnd)]
+    public class BookingHistoryTests : IClassFixture<HistoryHost>
     {
         private readonly ContainersFixture _fixture;
         private readonly ApiFactory _api;
         private readonly string _database;
 
-        public BookingHistoryTests(ContainersFixture fixture)
+        // One host for the whole class. Its clock only moves forward, and every test works on its own booking.
+        public BookingHistoryTests(HistoryHost host)
         {
-            _fixture = fixture;
-            // A database of its own, like the end to end tests: a host delivers what it finds in the outbox table
-            // to its own bus, so two hosts on one database would take each other's events.
-            _database = fixture.GetPostgresConnectionString("seathive_history");
-            _api = new ApiFactory(
-                fixture,
-                new Dictionary<string, string?> { ["ConnectionStrings__DefaultConnection"] = _database },
-                withWorker: true);
+            _fixture = host.Fixture;
+            _api = host.Api;
+            _database = host.Database;
         }
-
-        public async Task InitializeAsync()
-        {
-            var options = new DbContextOptionsBuilder<WorkerDbContext>()
-                .UseNpgsql(_database, WorkerDbContext.ConfigureNpgsql)
-                .Options;
-            await using var db = new WorkerDbContext(options);
-            await db.Database.MigrateAsync();
-        }
-
-        public async Task DisposeAsync() => await _api.DisposeAsync();
 
         private static string HistoryUrl(int bookingId) => $"/api/Booking/{bookingId}/history";
 

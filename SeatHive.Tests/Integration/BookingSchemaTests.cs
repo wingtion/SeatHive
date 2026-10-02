@@ -6,7 +6,8 @@ namespace SeatHive.Tests.Integration
 {
     // These tests talk to the database directly, with no lock and no service in between:
     // the guarantees below must hold in PostgreSQL itself.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.HoldService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class BookingSchemaTests
     {
         private readonly ContainersFixture _fixture;

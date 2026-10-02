@@ -2,7 +2,8 @@ using SeatHive.Api.Services;
 
 namespace SeatHive.Tests.Integration
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.HoldService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class RedisLockServiceTests
     {
         private readonly ContainersFixture _fixture;

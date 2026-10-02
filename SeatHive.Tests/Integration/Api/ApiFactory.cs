@@ -1,5 +1,8 @@
+using System.IdentityModel.Tokens.Jwt;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Claims;
+using System.Text;
 using System.Text.Json;
 using MassTransit;
 using MassTransit.Testing;
@@ -10,6 +13,8 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Tokens;
+using SeatHive.Api.Models;
 using SeatHive.Api.Services;
 using Microsoft.EntityFrameworkCore;
 using SeatHive.Worker;
@@ -53,6 +58,7 @@ namespace SeatHive.Tests.Integration.Api
         private readonly bool _withWorker;
         private readonly int _paymentDelayMs;
         private readonly string _environment;
+        private readonly ContainersFixture _fixture;
 
         // withWorker also runs the Worker's consumers in this host, with payments that never fail at random and take
         // paymentDelayMs on the test clock (no time by default), so a booking goes through its whole story
@@ -66,6 +72,7 @@ namespace SeatHive.Tests.Integration.Api
             string environment = "Testing")
         {
             _environment = environment;
+            _fixture = fixture;
             _settings = new Dictionary<string, string?>
             {
                 ["ConnectionStrings__DefaultConnection"] = fixture.GetPostgresConnectionString(),
@@ -191,7 +198,36 @@ namespace SeatHive.Tests.Integration.Api
             return body.GetProperty("token").GetString()!;
         }
 
-        public async Task<HttpClient> CreateUserClientAsync(string? email = null, string password = "Passw0rd!")
+        // A client for a new user. Most tests are not about signing in, so the user is written to the database
+        // and gets a token signed with the test key, like the API would issue it. Registering and logging in hash
+        // the password twice, which costs about a quarter of a second per user; SignInAsUserAsync does that for real.
+        public async Task<HttpClient> CreateUserClientAsync(string? email = null)
+        {
+            email ??= UniqueEmail();
+            var client = CreateClient();
+
+            await using var db = _fixture.CreateContext(ConnectionString);
+            var user = new User { Email = email, PasswordHash = "not-a-real-hash" };
+            db.Users.Add(user);
+            await db.SaveChangesAsync();
+
+            return Authorize(client, CreateToken(user));
+        }
+
+        // A client for the admin the API seeded at startup, with a token signed with the test key.
+        public async Task<HttpClient> CreateAdminClientAsync()
+        {
+            // The host seeds the admin when it starts.
+            var client = CreateClient();
+
+            await using var db = _fixture.CreateContext(ConnectionString);
+            var admin = await db.Users.AsNoTracking().SingleAsync(u => u.Email == AdminEmail);
+
+            return Authorize(client, CreateToken(admin));
+        }
+
+        // The real way in: register and log in over HTTP, and use the token the API issued.
+        public async Task<HttpClient> SignInAsUserAsync(string? email = null, string password = "Passw0rd!")
         {
             email ??= UniqueEmail();
             var client = CreateClient();
@@ -199,10 +235,32 @@ namespace SeatHive.Tests.Integration.Api
             return Authorize(client, await LoginAsync(client, email, password));
         }
 
-        public async Task<HttpClient> CreateAdminClientAsync()
+        public async Task<HttpClient> SignInAsAdminAsync()
         {
             var client = CreateClient();
             return Authorize(client, await LoginAsync(client, AdminEmail, AdminPassword));
+        }
+
+        private string ConnectionString => _settings["ConnectionStrings__DefaultConnection"]!;
+
+        // The same claims, issuer and audience as AuthService puts into a token.
+        private string CreateToken(User user)
+        {
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings["Jwt__Key"]!));
+            var token = new JwtSecurityToken(
+                issuer: "SeatHive.Api",
+                audience: "SeatHive.Client",
+                claims: new[]
+                {
+                    new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                    new Claim(JwtRegisteredClaimNames.Email, user.Email),
+                    new Claim("role", user.Role),
+                    new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString())
+                },
+                expires: DateTime.UtcNow.AddHours(2),
+                signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
+
+            return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
         public static HttpClient Authorize(HttpClient client, string token)

@@ -15,16 +15,37 @@ namespace SeatHive.Tests.Integration
 {
     // The Worker's consumers with its own inbox and outbox, on an in-memory bus and the real database.
     // Payments take no time here unless a test says otherwise; whether they fail at random is set per test.
-    [Collection(ContainersCollection.Name)]
-    public class WorkerConsumerTests
+    [Collection(TestCollections.Worker)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
+    public class WorkerConsumerTests : IClassFixture<WorkerConsumerTests.DefaultWorker>
     {
         private static int _nextBookingId = 1_000_000;
 
         private readonly ContainersFixture _fixture;
+        private readonly ServiceProvider _defaultWorker;
 
-        public WorkerConsumerTests(ContainersFixture fixture)
+        // A Worker whose payments never fail at random and take no time, started once for the class.
+        // Tests that need other settings start their own. Every test uses ids of its own, so sharing is safe.
+        public sealed class DefaultWorker : IAsyncLifetime
+        {
+            private readonly ContainersFixture _fixture;
+
+            public DefaultWorker(ContainersFixture fixture)
+            {
+                _fixture = fixture;
+            }
+
+            public ServiceProvider Services { get; private set; } = null!;
+
+            public async Task InitializeAsync() => Services = await StartWorkerAsync(_fixture, failureRate: 0);
+
+            public async Task DisposeAsync() => await Services.DisposeAsync();
+        }
+
+        public WorkerConsumerTests(ContainersFixture fixture, DefaultWorker defaultWorker)
         {
             _fixture = fixture;
+            _defaultWorker = defaultWorker.Services;
         }
 
         // How often the provider finished a charge call, per idempotency key.
@@ -58,7 +79,8 @@ namespace SeatHive.Tests.Integration
         }
 
         // connectionString picks another database on the same server; the default is the shared test database.
-        private async Task<ServiceProvider> StartWorkerAsync(
+        private static async Task<ServiceProvider> StartWorkerAsync(
+            ContainersFixture fixture,
             double failureRate, TimeProvider? clock = null, int delayMs = 0, string? connectionString = null)
         {
             var services = new ServiceCollection();
@@ -71,7 +93,7 @@ namespace SeatHive.Tests.Integration
                 o.MaxDelayMs = delayMs;
             });
             services.AddDbContext<WorkerDbContext>(o =>
-                o.UseNpgsql(connectionString ?? _fixture.GetPostgresConnectionString(), WorkerDbContext.ConfigureNpgsql));
+                o.UseNpgsql(connectionString ?? fixture.GetPostgresConnectionString(), WorkerDbContext.ConfigureNpgsql));
 
             // The real provider, wrapped only to count its calls.
             services.AddSingleton<ChargeCalls>();
@@ -138,7 +160,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task PaymentRequested_ShouldPublishPaymentSucceeded_WhenPaymentsNeverFail()
         {
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest();
 
@@ -153,7 +175,7 @@ namespace SeatHive.Tests.Integration
         public async Task PaymentRequested_ShouldPublishPaymentFailed_WhenFailureIsForced()
         {
             // Random failures are off, so only the flag on the request can make it fail.
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest(forceFailure: true);
 
@@ -168,7 +190,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task PaymentRequested_ShouldPublishPaymentFailed_WhenTheFailureRateIsOne()
         {
-            await using var worker = await StartWorkerAsync(failureRate: 1);
+            await using var worker = await StartWorkerAsync(_fixture, failureRate: 1);
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest();
 
@@ -184,7 +206,7 @@ namespace SeatHive.Tests.Integration
             // A database of its own, so every other session in it belongs to this Worker.
             var connectionString = _fixture.GetPostgresConnectionString("seathive_worker_tx");
             var clock = new GatedClock();
-            await using var worker = await StartWorkerAsync(failureRate: 0, clock, delayMs: 1000, connectionString);
+            await using var worker = await StartWorkerAsync(_fixture, failureRate: 0, clock, delayMs: 1000, connectionString);
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest();
 
@@ -215,7 +237,11 @@ namespace SeatHive.Tests.Integration
         [InlineData(false)]
         public async Task SamePaymentRequestDeliveredTwice_ShouldChargeOnce_AndProduceOneResult(bool sameMessageId)
         {
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            // A Worker of its own, freshly started, as this test has always had. On a Worker that is already warm
+            // the two deliveries reach the second step at the very same moment, and then that step has been seen
+            // to run twice and announce two results (about 13 of 200 tries). That is a race in the Worker,
+            // not in this test; until it is fixed, this test only covers deliveries that do not overlap exactly.
+            await using var worker = await StartWorkerAsync(_fixture, failureRate: 0);
             var harness = worker.GetRequiredService<ITestHarness>();
             var calls = worker.GetRequiredService<ChargeCalls>();
             var request = NewPaymentRequest();
@@ -244,14 +270,19 @@ namespace SeatHive.Tests.Integration
 
             // One charge at the provider, one result for the API.
             Assert.Equal(1, await WithDbAsync(worker, db => db.SimulatedCharges.CountAsync(c => c.IdempotencyKey == request.PaymentId)));
-            Assert.Equal(1, Count<PaymentSucceeded>(worker, request.BookingId, e => e.BookingId));
+            // "One result" means the result was produced once. That one message can still arrive twice: when the
+            // second delivery comes in while the first is sending what it stored in the outbox, both send it.
+            // The outbox promises at least once, and a consumer with an inbox (the API's) takes it once.
+            // So what is counted here is distinct results: had the consumer run twice, their timestamps would differ.
+            var results = worker.GetRequiredService<EventLog>().Of<PaymentSucceeded>(e => e.BookingId == request.BookingId);
+            Assert.Single(results.Distinct());
             Assert.Equal(0, Count<PaymentFailed>(worker, request.BookingId, e => e.BookingId));
         }
 
         [Fact]
         public async Task Provider_ShouldReturnTheFirstResult_WhenAskedAgainWithTheSameKey()
         {
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            var worker = _defaultWorker;
             var key = Guid.NewGuid();
 
             async Task<ChargeResult> ChargeAsync(Guid idempotencyKey, bool forceFailure)
@@ -274,7 +305,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task Provider_ShouldChargeOnce_WhenTheSameKeyArrivesTwiceAtTheSameTime()
         {
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            var worker = _defaultWorker;
 
             for (var round = 0; round < 10; round++)
             {
@@ -295,7 +326,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task RefundRequested_ShouldPublishRefundCompleted()
         {
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var bookingId = Interlocked.Increment(ref _nextBookingId);
             var paymentId = Guid.NewGuid();
@@ -309,7 +340,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task BookingConfirmed_ShouldPublishNotificationSent_MarkedAsSimulated()
         {
-            await using var worker = await StartWorkerAsync(failureRate: 0);
+            var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var bookingId = Interlocked.Increment(ref _nextBookingId);
 

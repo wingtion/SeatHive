@@ -8,7 +8,8 @@ using SeatHive.Api.Services;
 namespace SeatHive.Tests.Integration
 {
     // Hold timing, expiry and limits. Time only moves when a test advances the clock; nothing here waits.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.HoldService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class HoldFlowTests
     {
         private static readonly DateTimeOffset Start = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);

@@ -10,41 +10,29 @@ namespace SeatHive.Tests.Integration.Api
 {
     // The API and the Worker's consumers together on one in-memory bus: nothing is published by hand.
     // Every endpoint is configured as in production: each consumer brings its own inbox, and the one that calls the provider has none.
-    [Collection(ContainersCollection.Name)]
-    public class EndToEndBookingTests : IAsyncLifetime
+    [Collection(TestCollections.EndToEnd)]
+    [Trait(TestCategories.Trait, TestCategories.EndToEnd)]
+    public class EndToEndBookingTests : IClassFixture<EndToEndHost>
     {
+        private readonly EndToEndHost _host;
         private readonly ContainersFixture _fixture;
         private readonly ApiFactory _api;
         private readonly string _database;
 
-        public EndToEndBookingTests(ContainersFixture fixture)
+        // One host for the whole class; every test works on its own booking.
+        public EndToEndBookingTests(EndToEndHost host)
         {
-            _fixture = fixture;
-            // A database of its own: every API host delivers what it finds in the outbox table to its own bus,
-            // so two hosts on one database would take each other's events. The API creates and migrates it at startup.
-            _database = fixture.GetPostgresConnectionString("seathive_e2e");
-            _api = new ApiFactory(
-                fixture,
-                new Dictionary<string, string?> { ["ConnectionStrings__DefaultConnection"] = _database },
-                withWorker: true);
+            _host = host;
+            _fixture = host.Fixture;
+            _api = host.Api;
+            _database = host.Database;
         }
 
-        // The Worker creates its own tables at startup; here the test does it for the Worker's part of this host.
-        public async Task InitializeAsync()
+        // Users here register and log in for real: this is the whole way through the system.
+        private async Task<(HttpClient Client, int BookingId)> HoldAsync(ApiFactory? api = null, string? database = null)
         {
-            var options = new DbContextOptionsBuilder<WorkerDbContext>()
-                .UseNpgsql(_database, WorkerDbContext.ConfigureNpgsql)
-                .Options;
-            await using var db = new WorkerDbContext(options);
-            await db.Database.MigrateAsync();
-        }
-
-        public async Task DisposeAsync() => await _api.DisposeAsync();
-
-        private async Task<(HttpClient Client, int BookingId)> HoldAsync(ApiFactory? api = null)
-        {
-            var client = await (api ?? _api).CreateUserClientAsync();
-            var seatId = await _fixture.CreateFreeSeatAsync(_database);
+            var client = await (api ?? _api).SignInAsUserAsync();
+            var seatId = await _fixture.CreateFreeSeatAsync(database ?? _database);
 
             var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
@@ -80,13 +68,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task ProviderCall_ShouldRunWithoutAnOpenDatabaseTransaction()
         {
-            // The same host, but the payment takes a second on the test clock, which does not move by itself.
-            await using var api = new ApiFactory(
-                _fixture,
-                new Dictionary<string, string?> { ["ConnectionStrings__DefaultConnection"] = _database },
-                withWorker: true,
-                paymentDelayMs: 1000);
-            var (client, bookingId) = await HoldAsync(api);
+            // A host like the one of this class, but the payment takes a second on the test clock, which does not
+            // move by itself. It gets a database of its own: the class's host is running, and in a database
+            // that only this host uses every open transaction is one of its own.
+            var database = _fixture.GetPostgresConnectionString("seathive_e2e_provider_call");
+            await ApiWithWorkerHost.MigrateWorkerAsync(database);
+            await using var api = _host.Create(database, paymentDelayMs: 1000);
+            var (client, bookingId) = await HoldAsync(api, database);
 
             var waiting = api.Clock.NextWaitAsync();
             var response = await client.PostAsync($"/api/Booking/{bookingId}/confirm", null);
@@ -97,7 +85,7 @@ namespace SeatHive.Tests.Integration.Api
             int openTransactions;
             try
             {
-                openTransactions = await _fixture.CountOpenTransactionsAsync(_database);
+                openTransactions = await _fixture.CountOpenTransactionsAsync(database);
             }
             finally
             {
@@ -107,7 +95,7 @@ namespace SeatHive.Tests.Integration.Api
 
             Assert.Equal(0, openTransactions);
 
-            await _fixture.WaitForBookingStatusAsync(bookingId, BookingStatus.Confirmed, _database);
+            await _fixture.WaitForBookingStatusAsync(bookingId, BookingStatus.Confirmed, database);
             await api.WaitForDeliveryAsync<NotificationSent>(e => e.BookingId == bookingId);
         }
 

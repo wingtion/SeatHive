@@ -9,7 +9,8 @@ using SeatHive.Shared.Events;
 namespace SeatHive.Tests.Integration
 {
     // Runs on real Postgres because the InMemory provider does not support ExecuteUpdateAsync or transactions.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.PaymentService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class BookingServiceDbTests
     {
         private readonly ContainersFixture _fixture;

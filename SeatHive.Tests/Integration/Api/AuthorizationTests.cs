@@ -8,7 +8,8 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class AuthorizationTests
     {
         private const string ResetUrl = "/api/Setup/create-data";
@@ -38,7 +39,7 @@ namespace SeatHive.Tests.Integration.Api
         [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn403_ForNormalUser(string url)
         {
-            var client = await _fixture.Api.CreateUserClientAsync();
+            var client = await _fixture.Api.SignInAsUserAsync();
 
             var response = await client.PostAsync(url, null);
 
@@ -50,7 +51,7 @@ namespace SeatHive.Tests.Integration.Api
         [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn200_ForAdmin(string url)
         {
-            var client = await _fixture.Api.CreateAdminClientAsync();
+            var client = await _fixture.Api.SignInAsAdminAsync();
 
             var response = await client.PostAsync(url, null);
 

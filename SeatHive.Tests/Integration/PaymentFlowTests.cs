@@ -10,7 +10,8 @@ namespace SeatHive.Tests.Integration
 {
     // The booking state machine around the payment, driven directly through the service.
     // Events go to a mocked bus; the real outbox is covered by the API tests.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.PaymentService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class PaymentFlowTests
     {
         private static readonly DateTimeOffset Start = new(2026, 1, 1, 12, 0, 0, TimeSpan.Zero);

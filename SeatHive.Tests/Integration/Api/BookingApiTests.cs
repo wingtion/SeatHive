@@ -6,7 +6,8 @@ using SeatHive.Api.Models;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiBooking)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class BookingApiTests
     {
         private const string HoldUrl = "/api/Booking/hold";

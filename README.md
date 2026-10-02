@@ -161,6 +161,18 @@ dotnet test
 
 The tests need a running Docker daemon, because the integration tests start a real PostgreSQL and a real Redis with Testcontainers. RabbitMQ is replaced by MassTransit's in-memory transport; the outbox and inbox run on the real database.
 
+The two containers are started once per run. The test classes are grouped into collections that run in parallel, each on a database of its own on that one PostgreSQL server (and a Redis database of its own). Most API tests get their user written straight to the database with a token signed by the test key; registering and logging in for real is kept for the registration, access and end to end tests.
+
+Every test has a category, so a part of the suite can be run on its own:
+
+```bash
+dotnet test --filter "Category=Integration"   # a service or the schema on the database, no API host
+dotnet test --filter "Category=Api"           # the API in-process, over HTTP
+dotnet test --filter "Category=E2E"           # the API and the Worker's consumers together
+```
+
+There are no unit tests: every test needs Docker.
+
 *   **Booking service (Testcontainers):** the service on a real database, partly with a mocked lock and message bus: for example that a lock which was not acquired is never released, and that each step (hold, payment request, confirmation) publishes its event once.
 *   **Hold flow (Testcontainers):** the same user holding a seat twice gets the same hold; another user can take a seat once its hold has run out, without the sweeper; confirming or releasing someone else's hold is rejected; an expired hold cannot be confirmed; the per-user limit; the sweep expires only holds that ran out. Time comes from a fake clock that the tests advance, so nothing waits for time to pass. The hold sweeper's timer loop itself is not tested, only the expiry it calls.
 *   **Payment flow (Testcontainers):** a successful payment confirms the booking; a failed one returns it to a hold that can be paid again; a result for an earlier attempt does not touch the current one; a payment that succeeds after the booking expired, was released or was deleted is refunded; a result inside the grace period still confirms.

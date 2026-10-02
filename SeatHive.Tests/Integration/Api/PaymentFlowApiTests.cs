@@ -13,7 +13,8 @@ namespace SeatHive.Tests.Integration.Api
 {
     // The real API with its outbox, inbox and consumers on the in-memory bus.
     // There is no Worker in this host, so payment results are published by the tests.
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiBooking)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class PaymentFlowApiTests
     {
         private readonly ContainersFixture _fixture;
@@ -193,7 +194,12 @@ namespace SeatHive.Tests.Integration.Api
                 await Task.Delay(20);
             }
 
-            Assert.Equal(1, CountDelivered<BookingConfirmed>(booking.Id, e => e.BookingId));
+            // Announced once: one BookingConfirmed was produced. That one message can still arrive twice, when the
+            // second delivery comes in while the first is sending what it stored in the outbox; the outbox promises
+            // at least once. A second run of the consumer could not add another: the booking is already confirmed,
+            // and confirming it again publishes nothing.
+            var announced = _fixture.Api.Services.GetRequiredService<EventLog>().Of<BookingConfirmed>(e => e.BookingId == booking.Id);
+            Assert.Single(announced.Distinct());
             Assert.Equal(0, CountDelivered<RefundRequested>(booking.Id, e => e.BookingId));
             Assert.Equal(BookingStatus.Confirmed, (await _fixture.ReadBookingAsync(booking.Id)).Status);
         }

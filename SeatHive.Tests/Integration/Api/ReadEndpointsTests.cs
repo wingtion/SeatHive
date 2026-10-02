@@ -8,7 +8,8 @@ using SeatHive.Api.Services;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class ReadEndpointsTests
     {
         private readonly ContainersFixture _fixture;

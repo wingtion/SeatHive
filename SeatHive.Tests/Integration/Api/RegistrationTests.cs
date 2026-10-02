@@ -3,7 +3,8 @@ using System.Net.Http.Json;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class RegistrationTests
     {
         private readonly ContainersFixture _fixture;

@@ -8,7 +8,8 @@ using SeatHive.Shared.Events;
 
 namespace SeatHive.Tests.Integration
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.HoldService)]
+    [Trait(TestCategories.Trait, TestCategories.Integration)]
     public class ConcurrentBookingTests
     {
         private const int ConcurrentRequests = 20;

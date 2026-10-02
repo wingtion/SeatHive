@@ -2,7 +2,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class StartupTests
     {
         private readonly ContainersFixture _fixture;
