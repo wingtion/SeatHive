@@ -74,7 +74,7 @@ Undecided:
 - How the destructive `create-data` reset is exposed, if at all, in a shared deployment.
 - Simulation parameters beyond the fixed 20 users on seat #1.
 
-README statements to verify before repeating them in UI copy: it names the Redlock algorithm (the code is a single-instance `SET NX` lock) and Role-Based Access Control (no roles exist in the code).
+The README now matches the code and can be used as the source for UI copy: the lock is a token-owned single-instance Redis lock (`SET NX`, released by a Lua script) backed by a conditional database update, not Redlock, and the roles are `User` and `Admin`.
 
 ## Brand Commitments
 

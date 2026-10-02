@@ -40,11 +40,11 @@ namespace SeatHive.Api.Controllers
             var seats = new List<Seat>();
             for (int i = 1; i <= 50; i++)
             {
-                seats.Add(new Seat { Section = "A", Row = "1", SeatNumber = i, EventId = concert.Id, Version = 1 });
+                seats.Add(new Seat { Section = "A", Row = "1", SeatNumber = i, EventId = concert.Id });
             }
             for (int i = 1; i <= 50; i++)
             {
-                seats.Add(new Seat { Section = "B", Row = "1", SeatNumber = i, EventId = concert.Id, Version = 1 });
+                seats.Add(new Seat { Section = "B", Row = "1", SeatNumber = i, EventId = concert.Id });
             }
 
             _context.Seats.AddRange(seats);

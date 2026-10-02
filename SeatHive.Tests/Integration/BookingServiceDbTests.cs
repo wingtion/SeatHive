@@ -40,7 +40,6 @@ namespace SeatHive.Tests.Integration
             var seat = await verifyDb.Seats.AsNoTracking().SingleAsync(s => s.Id == seatId);
             Assert.True(seat.IsBooked);
             Assert.Equal(100, seat.UserId);
-            Assert.Equal(2, seat.Version);
         }
     }
 }

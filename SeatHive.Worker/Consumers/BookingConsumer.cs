@@ -15,12 +15,12 @@ namespace SeatHive.Worker.Consumers
         {
             var message = context.Message;
 
-            _logger.LogInformation($"[RabbitMQ] Order received for Seat #{message.SeatId} by User {message.UserId}");
+            _logger.LogInformation("Booking event received for Seat {SeatId} by User {UserId}", message.SeatId, message.UserId);
 
-            // Simulate slow processing (e.g., Generating PDF Ticket)
+            // Simulate slow processing. Nothing is sent or generated yet.
             await Task.Delay(2000);
 
-            _logger.LogInformation($"[RabbitMQ] Email sent to User {message.UserId}. processing complete.");
+            _logger.LogInformation("Booking event processed for Seat {SeatId} by User {UserId}", message.SeatId, message.UserId);
         }
     }
 }

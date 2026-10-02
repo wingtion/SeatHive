@@ -36,8 +36,7 @@ namespace SeatHive.Api.Services
                 .Where(s => s.Id == seatId && !s.IsBooked)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(s => s.IsBooked, true)
-                    .SetProperty(s => s.UserId, userId)
-                    .SetProperty(s => s.Version, s => s.Version + 1));
+                    .SetProperty(s => s.UserId, userId));
 
             if (updatedRows == 0) return "Seat is already booked.";
 
