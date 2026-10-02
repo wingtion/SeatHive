@@ -53,11 +53,11 @@ namespace SeatHive.Tests.Integration.Api
 
             for (var i = 0; i < Limit; i++)
             {
-                var allowed = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+                var allowed = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
                 Assert.NotEqual(HttpStatusCode.TooManyRequests, allowed.StatusCode);
             }
 
-            var rejected = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+            var rejected = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
 
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
         }

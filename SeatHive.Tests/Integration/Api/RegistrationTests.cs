@@ -85,7 +85,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);

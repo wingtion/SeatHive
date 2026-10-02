@@ -9,6 +9,12 @@ namespace SeatHive.Api.Services
         public const string SeatNotFound = "seat_not_found";
         public const string SeatAlreadyBooked = "seat_already_booked";
         public const string SeatLocked = "seat_locked";
+        public const string SeatHeld = "seat_held";
+        public const string HoldLimitReached = "hold_limit_reached";
+        public const string HoldExpired = "hold_expired";
+        public const string HoldNotActive = "hold_not_active";
+        public const string BookingNotFound = "booking_not_found";
+        public const string NotHoldOwner = "not_hold_owner";
         public const string ValidationFailed = "validation_failed";
         public const string InvalidToken = "invalid_token";
         public const string EmailAlreadyRegistered = "email_already_registered";

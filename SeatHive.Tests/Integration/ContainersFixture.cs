@@ -1,10 +1,15 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Options;
+using Moq;
 using Npgsql;
 using SeatHive.Api.Data;
 using SeatHive.Api.Models;
+using SeatHive.Api.Services;
 using SeatHive.Tests.Integration.Api;
 using StackExchange.Redis;
+using Event = SeatHive.Api.Models.Event;
 using Testcontainers.PostgreSql;
 using Testcontainers.Redis;
 
@@ -94,6 +99,23 @@ namespace SeatHive.Tests.Integration
         }
 
         public async Task<int> CreateUserAsync() => (await CreateUsersAsync(1)).Single();
+
+        // A BookingService on the given context. Anything not passed in gets a default:
+        // the real Redis lock, a bus that swallows events and the default hold settings.
+        public BookingService CreateBookingService(
+            AppDbContext db,
+            TimeProvider clock,
+            IRedisLockService? lockService = null,
+            IPublishEndpoint? bus = null,
+            HoldOptions? options = null)
+        {
+            return new BookingService(
+                db,
+                lockService ?? new RedisLockService(Redis),
+                bus ?? Mock.Of<IPublishEndpoint>(),
+                clock,
+                Options.Create(options ?? new HoldOptions()));
+        }
     }
 
     [CollectionDefinition(Name)]

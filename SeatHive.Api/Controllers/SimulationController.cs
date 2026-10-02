@@ -26,7 +26,7 @@ namespace SeatHive.Api.Controllers
                 return this.ProblemWithCode(StatusCodes.Status401Unauthorized, ErrorCodes.InvalidToken, "The token has no valid user id.");
             }
 
-            // We will simulate 20 requests trying to book Seat #1 at the same time.
+            // We will simulate 20 requests trying to hold Seat #1 at the same time.
             var tasks = new List<Task<BookingResult>>();
 
             // Create 20 concurrent threads
@@ -39,8 +39,8 @@ namespace SeatHive.Api.Controllers
                     {
                         var service = scope.ServiceProvider.GetRequiredService<BookingService>(); // Resolve BookingService
 
-                        // Try to book Seat #1
-                        return await service.BookSeatAsync(1, userId);
+                        // Try to hold Seat #1
+                        return await service.HoldSeatAsync(1, userId);
                     }
                 }));
             }
@@ -48,9 +48,10 @@ namespace SeatHive.Api.Controllers
             // Wait for all 20 users to finish
             var results = await Task.WhenAll(tasks);
 
-            // Count how many people successfully booked the seat
-            var successCount = results.Count(r => r.IsSuccess);
-            var failCount = results.Count(r => !r.IsSuccess);
+            // Count how many attempts actually took the seat.
+            // Every attempt is the same user, so an attempt that only got the existing hold back does not count.
+            var successCount = results.Count(r => r.IsSuccess && r.Changed);
+            var failCount = results.Length - successCount;
 
             return Ok(new
             {

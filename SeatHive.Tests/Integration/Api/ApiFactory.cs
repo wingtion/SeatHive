@@ -5,7 +5,9 @@ using MassTransit;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Time.Testing;
 
 namespace SeatHive.Tests.Integration.Api
 {
@@ -17,6 +19,11 @@ namespace SeatHive.Tests.Integration.Api
         public const string JwtKey = "test-only-signing-key-0123456789-abcdefghijklmnop";
         public const string AdminEmail = "admin@seathive.test";
         public const string AdminPassword = "AdminPassw0rd!";
+
+        // The API's clock. It starts at the real time (whole seconds, so values survive the database round trip)
+        // and never moves by itself, so holds do not expire and the sweeper does not run unless a test advances it.
+        public FakeTimeProvider Clock { get; } =
+            new(DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
 
         private static readonly object EnvironmentLock = new();
         private readonly Dictionary<string, string?> _settings;
@@ -48,7 +55,11 @@ namespace SeatHive.Tests.Integration.Api
         {
             // Not "Development", so user-secrets on the developer machine cannot leak into tests.
             builder.UseEnvironment("Testing");
-            builder.ConfigureTestServices(services => services.AddMassTransitTestHarness());
+            builder.ConfigureTestServices(services =>
+            {
+                services.AddMassTransitTestHarness();
+                services.AddSingleton<TimeProvider>(Clock);
+            });
         }
 
         protected override IHost CreateHost(IHostBuilder builder)

@@ -111,6 +111,11 @@ builder.Services.AddScoped<SeatHive.Api.Services.BookingService>();
 builder.Services.AddScoped<SeatHive.Api.Services.IRedisLockService, SeatHive.Api.Services.RedisLockService>();
 builder.Services.AddScoped<SeatHive.Api.Services.AuthService>();
 
+// Hold timing goes through TimeProvider so tests can move the clock.
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.Configure<HoldOptions>(builder.Configuration.GetSection(HoldOptions.SectionName));
+builder.Services.AddHostedService<HoldExpirySweeper>();
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {

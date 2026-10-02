@@ -97,7 +97,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = ApiFactory.Authorize(_fixture.Api.CreateClient(), CreateToken(sub: "not-a-number"));
 
-            var response = await client.PostAsJsonAsync("/api/Booking", new { seatId = 1 });
+            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = 1 });
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }

@@ -7,22 +7,35 @@ namespace SeatHive.Api.Services
         SeatNotFound,
         SeatAlreadyBooked,
         // Another request is working on this seat right now.
-        SeatLocked
+        SeatLocked,
+        // Another user holds the seat; it may become free again.
+        SeatHeld,
+        HoldLimitReached,
+        HoldExpired,
+        // The booking is no longer a hold (released, or already confirmed when releasing).
+        HoldNotActive,
+        BookingNotFound,
+        NotHoldOwner
     }
 
     public class BookingResult
     {
-        private BookingResult(Booking? booking, BookingError? error)
+        private BookingResult(Booking? booking, BookingError? error, bool changed)
         {
             Booking = booking;
             Error = error;
+            Changed = changed;
         }
 
         public Booking? Booking { get; }
         public BookingError? Error { get; }
         public bool IsSuccess => Booking != null;
 
-        public static BookingResult Success(Booking booking) => new(booking, null);
-        public static BookingResult Failure(BookingError error) => new(null, error);
+        // False when an idempotent call returned a booking that was already in the requested state.
+        public bool Changed { get; }
+
+        public static BookingResult Success(Booking booking) => new(booking, null, true);
+        public static BookingResult Unchanged(Booking booking) => new(booking, null, false);
+        public static BookingResult Failure(BookingError error) => new(null, error, false);
     }
 }

@@ -47,13 +47,13 @@ A working seat-booking flow with its own "under the hood" layer beside it. The c
 Implemented today:
 
 - `POST /api/auth/register` and `POST /api/auth/login` (email + password, returns a JWT).
-- `POST /api/booking` (authenticated; the user ID is taken from the token, never from the request body).
-- `POST /api/setup/create-data`: drops and recreates the database, seeds one event with 100 seats (sections A and B, row 1, seats 1–50 each).
-- `POST /api/simulation/simulate-concurrency`: 20 concurrent bookings of seat #1; returns total, successful and failed counts.
-- Booking takes a Redis lock on `lock:seat:{id}` (single-instance `SET NX` with a 10 second expiry), marks the seat booked in Postgres, publishes `BookingCreatedEvent` (SeatId, UserId, CreatedAt) through MassTransit/RabbitMQ, then releases the lock.
+- `POST /api/booking/hold`, `POST /api/booking/{id}/confirm` and `POST /api/booking/{id}/release` (authenticated; the user ID is taken from the token, never from the request body).
+- `POST /api/setup/create-data` (Admin only): clears events, seats and bookings and restarts their ids, keeps users, seeds one event with 100 seats (sections A and B, row 1, seats 1–50 each).
+- `POST /api/simulation/simulate-concurrency` (Admin only): 20 concurrent attempts to hold seat #1, all as the admin who started it; returns total, successful and failed counts.
+- Booking is hold then confirm. `POST /api/booking/hold` takes a Redis lock on `lock:seat:{id}` (single-instance `SET NX` with a 10 second expiry), inserts a `Held` booking in Postgres that expires after 5 minutes (configurable; at most 4 active holds per user), then releases the lock. `POST /api/booking/{id}/confirm` turns the owner's unexpired hold into `Confirmed` and publishes `BookingCreatedEvent` (SeatId, UserId, CreatedAt) through MassTransit/RabbitMQ. `POST /api/booking/{id}/release` gives the hold up. Holds that ran out are marked `Expired` on the next hold attempt for that seat and by a background sweeper.
 - The worker consumes `BookingCreatedEvent` and simulates slow ticket/email processing with a 2 second delay; it only logs.
-- Booking outcomes are plain strings: "Booking successful!", "Seat is already booked.", "Seat not found.", "System busy.".
-- Data model: Event (name, date), Seat (section, row, seat number, booked flag, user, version), User (email, password hash).
+- Booking outcomes: success returns JSON with `bookingId`, `seatId`, `status` and, for a hold, `expiresAt` (for a confirm, `confirmedAt`). Errors are `application/problem+json` with a machine-readable `code`: `seat_not_found` (404), `seat_already_booked` (409), `seat_held` (409), `seat_locked` (409), `hold_limit_reached` (409), `hold_expired` (410), `hold_not_active` (409), `booking_not_found` (404), `not_hold_owner` (403), `validation_failed` (400), `invalid_token` (401).
+- Data model: Event (name, date), Seat (section, row, seat number; no booked flag), Booking (seat, user, status `Held`/`Confirmed`/`Expired`/`Released`, created/expires/confirmed timestamps), User (email, password hash, role). A seat is taken while it has a `Held` or `Confirmed` booking; a partial unique index allows at most one of those per seat.
 
 Planned backend work the interface depends on (confirmed direction, not yet built):
 

@@ -1,9 +1,9 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Time.Testing;
 using Moq;
 using SeatHive.Api.Models;
 using SeatHive.Api.Services;
-using SeatHive.Shared.Events;
 
 namespace SeatHive.Tests.Integration
 {
@@ -21,21 +21,23 @@ namespace SeatHive.Tests.Integration
         }
 
         [Fact]
-        public async Task ConcurrentRequestsForSameSeat_ShouldProduceExactlyOneBooking()
+        public async Task ConcurrentHoldsForSameSeat_ShouldProduceExactlyOneHold()
         {
             var failedRounds = new List<string>();
-            var users = await _fixture.CreateUsersAsync(ConcurrentRequests);
+            var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
 
             for (var round = 1; round <= Rounds; round++)
             {
+                // New users every round: winners keep their hold, and a user at the hold limit could not win again.
+                var users = await _fixture.CreateUsersAsync(ConcurrentRequests);
                 var seatId = await _fixture.CreateFreeSeatAsync();
                 var bus = new Mock<IPublishEndpoint>();
 
                 var attempts = users.Select(userId => Task.Run(async () =>
                 {
                     await using var db = _fixture.CreateContext();
-                    var service = new BookingService(db, new RedisLockService(_fixture.Redis), bus.Object);
-                    var result = await service.BookSeatAsync(seatId, userId);
+                    var service = _fixture.CreateBookingService(db, clock, bus: bus.Object);
+                    var result = await service.HoldSeatAsync(seatId, userId);
                     return (userId, result);
                 }));
 
@@ -43,18 +45,19 @@ namespace SeatHive.Tests.Integration
                 var winners = results.Where(r => r.result.IsSuccess).Select(r => r.userId).ToList();
                 var published = bus.Invocations.Count(i => i.Method.Name == nameof(IPublishEndpoint.Publish));
 
-                // The seat must have exactly one booking, and it must belong to the winner.
+                // The seat must have exactly one booking, a hold, and it must belong to the winner.
                 await using var verifyDb = _fixture.CreateContext();
-                var bookedBy = await verifyDb.Bookings.AsNoTracking()
+                var bookings = await verifyDb.Bookings.AsNoTracking()
                     .Where(b => b.SeatId == seatId)
-                    .Select(b => b.UserId)
                     .ToListAsync();
 
-                if (winners.Count != 1 || published != 1 || bookedBy.Count != 1 || bookedBy[0] != winners[0])
+                // A hold is not a booking yet, so nothing is published.
+                if (winners.Count != 1 || published != 0 || bookings.Count != 1
+                    || bookings[0].UserId != winners[0] || bookings[0].Status != BookingStatus.Held)
                 {
                     failedRounds.Add(
-                        $"round {round}: successes={winners.Count} [{string.Join(",", winners)}], " +
-                        $"events={published}, bookings by=[{string.Join(",", bookedBy)}]");
+                        $"round {round}: successes={winners.Count} [{string.Join(",", winners)}], events={published}, " +
+                        $"bookings=[{string.Join(",", bookings.Select(b => $"{b.UserId}:{b.Status}"))}]");
                 }
             }
 
