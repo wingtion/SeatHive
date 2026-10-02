@@ -23,8 +23,7 @@ namespace SeatHive.Tests.Integration.Api
             var second = await ApiFactory.RegisterAsync(client, email.ToUpperInvariant(), "Passw0rd!");
 
             Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-            Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
-            Assert.Equal("User already exists.", await second.Content.ReadAsStringAsync());
+            Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
 
             // Login is case-insensitive too.
             await ApiFactory.LoginAsync(client, email.ToUpperInvariant(), "Passw0rd!");
@@ -40,7 +39,7 @@ namespace SeatHive.Tests.Integration.Api
                 .Select(_ => ApiFactory.RegisterAsync(client, email, "Passw0rd!")));
 
             Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
-            Assert.Equal(9, responses.Count(r => r.StatusCode == HttpStatusCode.BadRequest));
+            Assert.Equal(9, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
         }
 
         public static TheoryData<string, string, string> InvalidRegistrations => new()

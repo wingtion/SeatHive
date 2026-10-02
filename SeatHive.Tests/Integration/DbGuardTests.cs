@@ -29,10 +29,11 @@ namespace SeatHive.Tests.Integration
             noLock.Setup(x => x.AcquireLockAsync(It.IsAny<string>(), It.IsAny<TimeSpan>()))
                   .ReturnsAsync(Mock.Of<IAsyncDisposable>());
 
-            // Both requests read the seat as free before either of them writes.
+            // Both requests see no active booking before either of them writes.
             var bothHaveRead = new WaitUntilAllHaveReadSeat(participants: 2);
+            var users = await _fixture.CreateUsersAsync(2);
 
-            var attempts = new[] { 1, 2 }.Select(userId => Task.Run(async () =>
+            var attempts = users.Select(userId => Task.Run(async () =>
             {
                 await using var db = _fixture.CreateContext(bothHaveRead);
                 var service = new BookingService(db, noLock.Object, bus.Object);
@@ -41,8 +42,12 @@ namespace SeatHive.Tests.Integration
 
             var results = await Task.WhenAll(attempts);
 
-            Assert.Equal(1, results.Count(r => r == "Booking successful!"));
-            Assert.Equal(1, results.Count(r => r == "Seat is already booked."));
+            // The second insert hits the unique index on active bookings.
+            Assert.Equal(1, results.Count(r => r.IsSuccess));
+            Assert.Equal(1, results.Count(r => r.Error == BookingError.SeatAlreadyBooked));
+
+            await using var verifyDb = _fixture.CreateContext();
+            Assert.Equal(1, await verifyDb.Bookings.CountAsync(b => b.SeatId == seatId));
         }
 
         private sealed class WaitUntilAllHaveReadSeat : DbCommandInterceptor
@@ -61,7 +66,8 @@ namespace SeatHive.Tests.Integration
                 DbDataReader result,
                 CancellationToken cancellationToken = default)
             {
-                if (command.CommandText.Contains("FROM \"Seats\""))
+                // The "is there an active booking?" check.
+                if (command.CommandText.Contains("FROM \"Bookings\""))
                 {
                     if (Interlocked.Decrement(ref _remaining) == 0) _allRead.TrySetResult();
                     await _allRead.Task.WaitAsync(TimeSpan.FromSeconds(10), cancellationToken);

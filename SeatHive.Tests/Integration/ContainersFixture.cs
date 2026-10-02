@@ -80,6 +80,20 @@ namespace SeatHive.Tests.Integration
             await db.SaveChangesAsync();
             return seat.Id;
         }
+
+        // Bookings reference real users, so tests that book through the service need some.
+        public async Task<List<int>> CreateUsersAsync(int count)
+        {
+            await using var db = CreateContext();
+            var users = Enumerable.Range(0, count)
+                .Select(_ => new User { Email = ApiFactory.UniqueEmail(), PasswordHash = "not-a-real-hash" })
+                .ToList();
+            db.Users.AddRange(users);
+            await db.SaveChangesAsync();
+            return users.Select(u => u.Id).ToList();
+        }
+
+        public async Task<int> CreateUserAsync() => (await CreateUsersAsync(1)).Single();
     }
 
     [CollectionDefinition(Name)]

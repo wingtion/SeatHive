@@ -26,16 +26,31 @@ namespace SeatHive.Api.Controllers
             // (This prevents User 1 from booking as User 999)
             if (!User.TryGetUserId(out var userId))
             {
-                return Unauthorized("Invalid Token: No User ID found.");
+                return this.ProblemWithCode(StatusCodes.Status401Unauthorized, ErrorCodes.InvalidToken, "The token has no valid user id.");
             }
 
             // 2. Call the service
             var result = await _bookingService.BookSeatAsync(request.SeatId, userId);
 
-            if (result == "Booking successful!")
-                return Ok(result);
+            if (result.Booking != null)
+            {
+                return Ok(new
+                {
+                    BookingId = result.Booking.Id,
+                    result.Booking.SeatId,
+                    Status = result.Booking.Status.ToString()
+                });
+            }
 
-            return BadRequest(result);
+            return result.Error switch
+            {
+                BookingError.SeatNotFound =>
+                    this.ProblemWithCode(StatusCodes.Status404NotFound, ErrorCodes.SeatNotFound, "Seat not found."),
+                BookingError.SeatLocked =>
+                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.SeatLocked, "Someone else is booking this seat right now."),
+                _ =>
+                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.SeatAlreadyBooked, "Seat is already booked.")
+            };
         }
     }
 }

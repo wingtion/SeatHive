@@ -1,5 +1,6 @@
 using MassTransit;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -40,7 +41,17 @@ var rabbitPassword = RequiredSetting("RabbitMQ:Password");
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(dbConnectionString));
 
-builder.Services.AddControllers();
+builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
+{
+    // Validation errors keep the standard ProblemDetails shape and get a machine-readable code like every other error.
+    options.InvalidModelStateResponseFactory = context =>
+    {
+        var problem = new ValidationProblemDetails(context.ModelState) { Status = StatusCodes.Status400BadRequest };
+        problem.Extensions["code"] = ErrorCodes.ValidationFailed;
+
+        return new BadRequestObjectResult(problem) { ContentTypes = { "application/problem+json" } };
+    };
+});
 
 builder.Services.AddMassTransit(x =>
 {

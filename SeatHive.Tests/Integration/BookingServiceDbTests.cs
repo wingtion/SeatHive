@@ -30,16 +30,21 @@ namespace SeatHive.Tests.Integration
             await using var db = _fixture.CreateContext();
             var service = new BookingService(db, mockLock.Object, mockBus.Object);
 
-            var result = await service.BookSeatAsync(seatId, 100);
+            var userId = await _fixture.CreateUserAsync();
 
-            Assert.Equal("Booking successful!", result);
+            var result = await service.BookSeatAsync(seatId, userId);
+
+            Assert.True(result.IsSuccess);
 
             mockBus.Verify(x => x.Publish<BookingCreatedEvent>(It.IsAny<object>(), It.IsAny<CancellationToken>()), Times.Once);
 
             await using var verifyDb = _fixture.CreateContext();
-            var seat = await verifyDb.Seats.AsNoTracking().SingleAsync(s => s.Id == seatId);
-            Assert.True(seat.IsBooked);
-            Assert.Equal(100, seat.UserId);
+            var booking = await verifyDb.Bookings.AsNoTracking().SingleAsync(b => b.SeatId == seatId);
+            Assert.Equal(result.Booking!.Id, booking.Id);
+            Assert.Equal(userId, booking.UserId);
+            Assert.Equal(BookingStatus.Confirmed, booking.Status);
+            Assert.NotNull(booking.ConfirmedAt);
+            Assert.Null(booking.ExpiresAt);
         }
     }
 }

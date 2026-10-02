@@ -108,7 +108,7 @@ namespace SeatHive.Tests.Integration.Api
         }
 
         // A correctly signed token, so only the content of "sub" is under test.
-        private static string CreateToken(string sub)
+        internal static string CreateToken(string sub)
         {
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ApiFactory.JwtKey));
             var token = new JwtSecurityToken(

@@ -25,7 +25,7 @@ namespace SeatHive.Api.Controllers
 
             // 1. Reset the demo data only. Users are kept.
             // RESTART IDENTITY makes seat ids start at 1 again.
-            await _context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Seats\", \"Events\" RESTART IDENTITY");
+            await _context.Database.ExecuteSqlRawAsync("TRUNCATE TABLE \"Bookings\", \"Seats\", \"Events\" RESTART IDENTITY");
 
             // 2. Create Event
             var concert = new Event

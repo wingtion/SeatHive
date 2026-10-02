@@ -74,7 +74,7 @@ Undecided:
 - How the destructive `create-data` reset is exposed, if at all, in a shared deployment.
 - Simulation parameters beyond the fixed 20 users on seat #1.
 
-The README now matches the code and can be used as the source for UI copy: the lock is a token-owned single-instance Redis lock (`SET NX`, released by a Lua script) backed by a conditional database update, not Redlock, and the roles are `User` and `Admin`.
+The README now matches the code and can be used as the source for UI copy: the lock is a token-owned single-instance Redis lock (`SET NX`, released by a Lua script) backed by a partial unique index on active bookings, not Redlock, and the roles are `User` and `Admin`.
 
 ## Brand Commitments
 

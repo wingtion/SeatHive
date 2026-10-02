@@ -20,14 +20,18 @@ namespace SeatHive.Api.Controllers
         [HttpPost("simulate-concurrency")]
         public async Task<IActionResult> SimulateConcurrency()
         {
-            // We will simulate 20 users trying to book Seat #1 at the same time.
-            var tasks = new List<Task<string>>();
+            // Bookings belong to real users, so every attempt is made as the admin who started the simulation.
+            if (!User.TryGetUserId(out var userId))
+            {
+                return this.ProblemWithCode(StatusCodes.Status401Unauthorized, ErrorCodes.InvalidToken, "The token has no valid user id.");
+            }
+
+            // We will simulate 20 requests trying to book Seat #1 at the same time.
+            var tasks = new List<Task<BookingResult>>();
 
             // Create 20 concurrent threads
             for (int i = 1; i <= 20; i++)
             {
-                var userId = i + 1000; // User 1001, 1002, etc.
-
                 tasks.Add(Task.Run(async () =>
                 {
                     // Create a new scope for each "user" (mimics a fresh HTTP request)
@@ -45,8 +49,8 @@ namespace SeatHive.Api.Controllers
             var results = await Task.WhenAll(tasks);
 
             // Count how many people successfully booked the seat
-            var successCount = results.Count(r => r == "Booking successful!");
-            var failCount = results.Count(r => r != "Booking successful!");
+            var successCount = results.Count(r => r.IsSuccess);
+            var failCount = results.Count(r => !r.IsSuccess);
 
             return Ok(new
             {

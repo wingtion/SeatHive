@@ -37,16 +37,47 @@ namespace SeatHive.Tests
             _service = new BookingService(_fakeDb, _mockLock.Object, _mockBus.Object);
         }
 
-        [Fact]
-        public async Task BookSeat_ShouldReturnError_WhenSeatIsAlreadyBooked()
+        [Theory]
+        [InlineData(BookingStatus.Confirmed)]
+        [InlineData(BookingStatus.Held)]
+        public async Task BookSeat_ShouldReturnError_WhenSeatHasAnActiveBooking(BookingStatus activeStatus)
         {
             var seatId = 1;
-            _fakeDb.Seats.Add(new Seat { Id = seatId, IsBooked = true, UserId = 99 });
+            _fakeDb.Seats.Add(new Seat { Id = seatId });
+            _fakeDb.Bookings.Add(new Booking { SeatId = seatId, UserId = 99, Status = activeStatus });
             await _fakeDb.SaveChangesAsync();
 
             var result = await _service.BookSeatAsync(seatId, 100);
 
-            Assert.Equal("Seat is already booked.", result);
+            Assert.Equal(BookingError.SeatAlreadyBooked, result.Error);
+            Assert.Null(result.Booking);
+        }
+
+        [Theory]
+        [InlineData(BookingStatus.Expired)]
+        [InlineData(BookingStatus.Released)]
+        public async Task BookSeat_ShouldSucceed_WhenSeatOnlyHasInactiveBookings(BookingStatus inactiveStatus)
+        {
+            var seatId = 2;
+            _fakeDb.Seats.Add(new Seat { Id = seatId });
+            _fakeDb.Bookings.Add(new Booking { SeatId = seatId, UserId = 99, Status = inactiveStatus });
+            await _fakeDb.SaveChangesAsync();
+
+            var result = await _service.BookSeatAsync(seatId, 100);
+
+            Assert.True(result.IsSuccess);
+            Assert.Equal(BookingStatus.Confirmed, result.Booking!.Status);
+            Assert.Equal(100, result.Booking.UserId);
+            Assert.NotNull(result.Booking.ConfirmedAt);
+        }
+
+        [Fact]
+        public async Task BookSeat_ShouldReturnError_AndPublishNothing_WhenSeatDoesNotExist()
+        {
+            var result = await _service.BookSeatAsync(404, 100);
+
+            Assert.Equal(BookingError.SeatNotFound, result.Error);
+            Assert.Empty(_mockBus.Invocations);
         }
 
         [Fact]
@@ -57,14 +88,14 @@ namespace SeatHive.Tests
 
             var result = await _service.BookSeatAsync(3, 100);
 
-            Assert.Equal("System busy.", result);
+            Assert.Equal(BookingError.SeatLocked, result.Error);
             _mockLockHandle.Verify(x => x.DisposeAsync(), Times.Never);
         }
 
         [Fact]
         public async Task BookSeat_ShouldReleaseLockOnce_WhenLockIsAcquired()
         {
-            _fakeDb.Seats.Add(new Seat { Id = 4, IsBooked = true, UserId = 99 });
+            _fakeDb.Seats.Add(new Seat { Id = 4 });
             await _fakeDb.SaveChangesAsync();
 
             await _service.BookSeatAsync(4, 100);
