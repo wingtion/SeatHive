@@ -120,7 +120,7 @@ Compose altyapısıyla API'yi yerelde çalıştırmak bağlanamaz.
 - **D4. Controller içinde senkron veri erişimi:** `SetupController.cs:21-48` (`SaveChanges`, `EnsureCreated`).
 - **D5. Servisler somut sınıf olarak enjekte ediliyor** (`Program.cs:74, 76`); konfigürasyon `IConfiguration["Jwt:Key"]!` ile dağınık okunuyor (`Program.cs:87-89`, `AuthService.cs:59, 70-71`). Options pattern yeterli; her servise arayüz eklemek gereksiz karmaşıklık olur.
 - **D6. Swagger güvenlik şeması `ApiKey`** (`Program.cs:54`); `Http` + `bearer` olursa "Bearer " yazmak gerekmez.
-- **D7. `UseHttpsRedirection`** (`Program.cs:101`) konteynerde HTTPS portu olmadan etkisiz; ters vekil arkasında forwarded headers gerekir.
+- **D7. `UseHttpsRedirection`** (`Program.cs:101`) konteynerde HTTPS portu olmadan etkisiz; ters vekil arkasında forwarded headers gerekir. Adım 5d'de eklendi: `ReverseProxy:TrustedProxies` ile yalnızca yapılandırılmış proxy'lerden gelen `X-Forwarded-For`/`X-Forwarded-Proto` kabul ediliyor (`ForwardLimit = 1`); `ForwardedHeadersTests` doğruluyor. Ters vekilin kendisi (Caddy) dağıtım adımında.
 - **D8. Kullanıcı sayımı:** register "User already exists." dönüyor (`AuthService.cs:26`). Demo için kabul edilebilir.
 - **D9. Loglarda string interpolasyonu:** `Worker/Consumers/BookingConsumer.cs:19, 24`; yapılandırılmış log şablonu kullanılmalı.
 - **D10. İmaj ve paket yaşı:** `redis:alpine` etiketsiz, `rabbitmq:3-management` (3.x topluluk desteği bitti), compose `version:` anahtarı artık geçersiz; `Swashbuckle 6.6.2`, `xunit 2.5.3`, `Microsoft.NET.Test.Sdk 17.8.0`, `coverlet 6.0.0` eski; EF paketleri karışık (`8.0.11` ve `8.0.24`).

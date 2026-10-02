@@ -20,6 +20,8 @@ services:
       - Jwt__Key=${JWT_KEY:?Set JWT_KEY in .env}
       - SEATHIVE_ADMIN_EMAIL=${SEATHIVE_ADMIN_EMAIL:-}
       - SEATHIVE_ADMIN_PASSWORD=${SEATHIVE_ADMIN_PASSWORD:-}
+      # Forwarded headers (client address, scheme) are believed only from this network: the reverse proxy joins it.
+      - ReverseProxy__TrustedProxies__0=${COMPOSE_SUBNET:-172.28.0.0/24}
       - ASPNETCORE_ENVIRONMENT=Development
     ports:
       - "8080:8080"
@@ -91,6 +93,13 @@ services:
       interval: 10s
       timeout: 10s
       retries: 10
+
+# A fixed subnet, so the API knows which addresses the reverse proxy can have (see ReverseProxy__TrustedProxies__0).
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-172.28.0.0/24}
 
 volumes:
   postgres_data:

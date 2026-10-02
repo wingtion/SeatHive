@@ -88,6 +88,23 @@ namespace SeatHive.Tests.Integration
             return seat.Id;
         }
 
+        // An event of its own with seats A-1-1 .. A-1-n, returned in that order.
+        public async Task<(int EventId, List<int> SeatIds)> CreateEventAsync(int seats, string? connectionString = null)
+        {
+            await using var db = CreateContext(connectionString ?? GetPostgresConnectionString());
+            var created = new Event
+            {
+                Name = "Test Event",
+                Date = DateTime.UtcNow,
+                Seats = Enumerable.Range(1, seats)
+                    .Select(number => new Seat { Section = "A", Row = "1", SeatNumber = number })
+                    .ToList()
+            };
+            db.Events.Add(created);
+            await db.SaveChangesAsync();
+            return (created.Id, created.Seats.OrderBy(s => s.SeatNumber).Select(s => s.Id).ToList());
+        }
+
         // Bookings reference real users, so tests that book through the service need some.
         public async Task<List<int>> CreateUsersAsync(int count)
         {

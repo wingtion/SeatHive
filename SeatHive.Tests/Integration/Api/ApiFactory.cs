@@ -3,6 +3,8 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using MassTransit;
 using MassTransit.Testing;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -76,7 +78,8 @@ namespace SeatHive.Tests.Integration.Api
                 ["SEATHIVE_ADMIN_PASSWORD"] = AdminPassword,
                 // High limits so only the rate limit tests ever hit them.
                 ["RateLimiting__Auth__PermitLimit"] = "100000",
-                ["RateLimiting__Booking__PermitLimit"] = "100000"
+                ["RateLimiting__Booking__PermitLimit"] = "100000",
+                ["RateLimiting__Read__PermitLimit"] = "100000"
             };
 
             _withWorker = withWorker;
@@ -112,6 +115,7 @@ namespace SeatHive.Tests.Integration.Api
                     }
                 });
                 services.AddSingleton<TimeProvider>(Clock);
+                services.AddSingleton<IStartupFilter, RemoteIpStartupFilter>();
                 if (_withWorker)
                 {
                     // What the Worker's consumers need: its payment settings and the simulated provider with its table.
@@ -144,6 +148,30 @@ namespace SeatHive.Tests.Integration.Api
                 {
                     foreach (var (key, value) in previous) Environment.SetEnvironmentVariable(key, value);
                 }
+            }
+        }
+
+        // The test server has no network connection, so a request has no address it came from.
+        // A test that needs one names it in this header; it is set before the API's own pipeline runs.
+        public const string RemoteIpHeader = "X-Test-Remote-Ip";
+
+        private sealed class RemoteIpStartupFilter : IStartupFilter
+        {
+            public Action<IApplicationBuilder> Configure(Action<IApplicationBuilder> next)
+            {
+                return app =>
+                {
+                    app.Use(async (context, nextMiddleware) =>
+                    {
+                        if (context.Request.Headers.TryGetValue(RemoteIpHeader, out var address))
+                        {
+                            context.Connection.RemoteIpAddress = System.Net.IPAddress.Parse(address.ToString());
+                        }
+
+                        await nextMiddleware(context);
+                    });
+                    next(app);
+                };
             }
         }
 

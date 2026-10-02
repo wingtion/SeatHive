@@ -16,6 +16,6 @@ namespace SeatHive.Api.Services
         public int PaymentGraceSeconds { get; set; } = 30;
 
         // How often the background sweeper expires holds that ran out.
-        public int SweepIntervalSeconds { get; set; } = 30;
+        public int SweepIntervalSeconds { get; set; } = 5;
     }
 }

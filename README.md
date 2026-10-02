@@ -21,7 +21,7 @@ Two services and a shared contract library:
     2.  A partial unique index in PostgreSQL: every booking is a row in the `Bookings` table, and the index allows at most one active (`Held`, `PaymentPending` or `Confirmed`) booking per seat. A second insert for the same seat fails and the booking is rejected.
 
     This is not Redlock. Redlock coordinates locks across several independent Redis nodes; SeatHive runs a single Redis instance, and the database index is what finally guarantees correctness even if the lock fails or expires.
-*   **Booking Model:** A seat has no "booked" flag; whether it is taken follows from its bookings. A booking has a status (`Held`, `PaymentPending`, `Confirmed`, `Expired`, `Released`) and timestamps.
+*   **Booking Model:** A seat has no "booked" flag; whether it is taken follows from its bookings. A booking has a status (`Held`, `PaymentPending`, `Confirmed`, `Expired`, `Released`) and timestamps. In JSON every enum value is a camelCase string: `held`, `paymentPending`, `confirmed`, `expired`, `released`.
 *   **Hold → Pay → Confirm Flow:** A seat is first held, then paid for, then confirmed.
     1.  **Hold:** creates a `Held` booking that expires after a configurable time (5 minutes by default). Holding a seat you already hold returns the same hold and does not extend it. A user can hold at most 4 seats at the same time (configurable); a booking waiting for its payment counts as one of them.
     2.  **Confirm:** only the owner can confirm, and only before the hold expires. Confirming starts the payment: the booking becomes `PaymentPending` and the API answers `202`. Confirming again while the payment is running changes nothing.
@@ -32,18 +32,21 @@ Two services and a shared contract library:
     *   The provider charges once per payment attempt: the attempt's id is its idempotency key, so a payment request that is delivered again gets the first answer back instead of a second charge. Every confirm starts a new attempt.
     *   The provider keeps its charges for 7 days (configurable); a background service deletes older ones every hour.
 *   **Refunds:** When a payment succeeds but its booking cannot be confirmed (it expired, was released, or was deleted by a reset of the demo data), the API asks for a refund and the Worker simulates it.
-*   **Hold Expiry:** A hold whose time has run out stops counting immediately: it cannot be confirmed and does not count towards the user's limit. It is marked `Expired` in two ways: lazily, when someone tries to hold that seat, inside the same transaction as the new hold; and by a background service that sweeps expired holds every 30 seconds (configurable). A booking waiting for its payment result is kept for a grace period after its hold ran out (30 seconds, configurable), so a payment made in time is not lost because its result arrived a moment late. Every status change is a single conditional update, so of a confirm, a payment result and an expiry only one can win for a given booking.
+*   **Hold Expiry:** A hold whose time has run out stops counting immediately: it cannot be confirmed and does not count towards the user's limit. It is marked `Expired` in two ways: lazily, when someone tries to hold that seat, inside the same transaction as the new hold; and by a background service that sweeps expired holds every 5 seconds (configurable). A booking waiting for its payment result is kept for a grace period after its hold ran out (30 seconds, configurable), so a payment made in time is not lost because its result arrived a moment late. Every status change is a single conditional update, so of a confirm, a payment result and an expiry only one can win for a given booking.
 *   **Error Responses:** Errors are `application/problem+json` with a machine-readable `code`:
     *   Seats: `seat_not_found` (404), `seat_already_booked` (409, the seat has a confirmed booking), `seat_held` (409, another user holds the seat), `seat_locked` (409, another request is working on that seat right now).
     *   Holds: `hold_limit_reached` (409), `hold_expired` (410), `hold_not_active` (409, confirming a released hold or releasing a booking that is not a hold), `payment_in_progress` (409, releasing a booking whose payment is running), `booking_not_found` (404), `not_hold_owner` (403).
-    *   General: `validation_failed` (400), `invalid_token` (401), `email_already_registered` (409), `invalid_credentials` (401).
+    *   Events: `event_not_found` (404).
+    *   General: `validation_failed` (400), `invalid_token` (401), `email_already_registered` (409), `invalid_credentials` (401). Errors that no endpoint produces itself have a body too: `unauthorized` (401, no or an invalid token), `forbidden` (403, wrong role), `rate_limited` (429).
 *   **Messaging:** The services talk through events on **RabbitMQ (MassTransit)**. Every event carries the booking id, the seat, the user and a timestamp.
     *   Transactional outbox: a booking change and the event that announces it are written in one database transaction, and the event is sent to RabbitMQ afterwards. An event is never lost, and never sent for a change that was rolled back.
     *   Inbox: a message that is delivered twice is consumed once. The one exception is the Worker's call to the payment provider, which is safe to repeat because of the idempotency key.
     *   The Worker keeps its inbox, outbox and the provider's charges in its own schema (`worker`) of the same database.
 *   **Authentication and Roles:** **JWT** authentication with two roles, `User` and `Admin`. The setup and simulation endpoints are Admin only. The admin account is created at startup from environment variables; without them no admin exists.
 *   **Input Validation:** Registration requires a valid email and a password of at least 8 characters and at most 72 bytes. Emails are stored in lowercase and are unique.
-*   **Rate Limiting:** Register and login are limited to 10 requests per minute per IP address, the booking endpoints (hold, confirm and release together) to 30 requests per minute per user. Requests over the limit get `429`.
+*   **Read Endpoints:** Events and their seats can be read without a token; a user's own bookings need one. Lists are paged (`page`, `pageSize`); a page size over the maximum (100, for seats 500) is rejected with `400`, not cut down. A seat is `available`, `held` or `booked`, with `heldUntil` while it is held. The seat response never says who holds a seat or which booking it is. A booking can only be read by its owner; for anyone else, admins included, it is `403` `not_hold_owner`.
+*   **Rate Limiting:** Register and login are limited to 10 requests per minute per IP address, the booking endpoints (hold, confirm and release together) to 30 requests per minute per user, and the read endpoints to 120 requests per minute per user (per IP address without a token), counted separately so reading never uses up the booking limit. Requests over the limit get `429`.
+*   **Behind a Reverse Proxy:** The limits per IP address need the client's address. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only when the request comes from a configured proxy (`ReverseProxy:TrustedProxies`, addresses or networks), and only the last hop counts. With nothing configured they are ignored. Docker Compose gives its network a fixed subnet and trusts that subnet.
 *   **Configuration:** Secrets (JWT key, database, Redis and RabbitMQ credentials) are not in the repository. The API and the Worker do not start if one is missing.
 *   **Containerization:** **Docker Compose** runs the API, Worker, Postgres, Redis and RabbitMQ. The API and the Worker each apply their own database migrations when they start.
 
@@ -122,13 +125,17 @@ Releasing a hold publishes `HoldReleased`, and a hold that runs out publishes `H
 2.  **Login:** `POST /api/auth/login` -> Copy Token (valid for 2 hours).
 3.  **Authorize:** Click the lock icon in Swagger -> Paste the token only (Swagger adds `Bearer` itself).
 4.  **Create demo data (Admin):** `POST /api/setup/create-data`. Log in with the admin account from your `.env` first. This recreates one event with 100 seats, with seat ids starting at 1 again; users are kept. All bookings are deleted, but booking ids are not reused.
-5.  **Hold:** `POST /api/booking/hold` with `{ "seatId": 5 }` (requires a token). Returns `{ "bookingId", "seatId", "status": "Held", "expiresAt" }`.
-6.  **Confirm:** `POST /api/booking/{bookingId}/confirm` before `expiresAt`. Returns `202` with `{ "bookingId", "seatId", "status": "PaymentPending", "confirmedAt": null }`; the booking is confirmed a few seconds later, when the payment result arrives. Calling it again then returns `200` with `"status": "Confirmed"`. After the hold has expired it returns `410` with `hold_expired`. Send the body `{ "simulatePaymentFailure": true }` to make this payment fail. There is no endpoint to read a booking yet (see the Roadmap); the Worker log shows the payment and the notification.
-7.  **Or release:** `POST /api/booking/{bookingId}/release` gives the hold up. Returns `{ "bookingId", "seatId", "status": "Released" }`.
+5.  **Look around (no token needed):** `GET /api/events`, `GET /api/events/{id}` and `GET /api/events/{id}/seats`. A list answers `{ "items", "page", "pageSize", "totalCount" }`; a seat is `{ "seatId", "section", "row", "seatNumber", "status", "heldUntil" }`.
+6.  **Hold:** `POST /api/booking/hold` with `{ "seatId": 5 }` (requires a token). Returns `{ "bookingId", "seatId", "status": "held", "expiresAt" }`.
+7.  **Confirm:** `POST /api/booking/{bookingId}/confirm` before `expiresAt`. Returns `202` with `{ "bookingId", "seatId", "status": "paymentPending", "confirmedAt": null }`; the booking is confirmed a few seconds later, when the payment result arrives. Calling it again then returns `200` with `"status": "confirmed"`. After the hold has expired it returns `410` with `hold_expired`. Send the body `{ "simulatePaymentFailure": true }` to make this payment fail. The Worker log shows the payment and the notification.
+8.  **Or release:** `POST /api/booking/{bookingId}/release` gives the hold up. Returns `{ "bookingId", "seatId", "status": "released" }`.
+9.  **Read your bookings:** `GET /api/booking` (paged, newest first) and `GET /api/booking/{bookingId}`. Each has the status, the timestamps, the seat and the event.
 
 Settings:
 
-*   API, section `Holds`: `DurationSeconds` (300), `MaxActivePerUser` (4), `PaymentGraceSeconds` (30) and `SweepIntervalSeconds` (30).
+*   API, section `Holds`: `DurationSeconds` (300), `MaxActivePerUser` (4), `PaymentGraceSeconds` (30) and `SweepIntervalSeconds` (5).
+*   API, section `RateLimiting`: `Auth:PermitLimit` (10), `Booking:PermitLimit` (30) and `Read:PermitLimit` (120), each per minute.
+*   API, `ReverseProxy:TrustedProxies`: a list of addresses or networks; empty by default. Docker Compose sets it to the subnet of its network (`COMPOSE_SUBNET` in `.env`, `172.28.0.0/24` by default).
 *   Worker, section `Payment`: `FailureRate` (0.2), `MinDelayMs` (1000), `MaxDelayMs` (3000), `ChargeRetentionDays` (7) and `CleanupIntervalMinutes` (60).
 
 ## Concurrency Simulation
@@ -153,6 +160,9 @@ The tests need a running Docker daemon, because the integration tests start a re
 *   **End to end (API and Worker consumers on one in-memory bus):** hold → confirm → `Confirmed` and `NotificationSent`; a forced payment failure and a retry; a refund for a payment that came too late; and again that no transaction is open while the payment is at the provider.
 *   **Concurrency (Testcontainers):** 20 concurrent users holding the same seat, repeated for 25 rounds, must produce exactly one hold each round. One user holding 10 seats at once must end up with exactly 4. A confirm racing the sweeper, and a payment result racing the sweeper, must each end in one outcome, never mixed. Further tests check that a lock can only be released by its owner, and that the database rejects a second active booking for the same seat even with the lock disabled.
 *   **Authorization and API (WebApplicationFactory):** the real API runs in-process and is checked for role access (401/403), status codes and error codes, validation (400), duplicate emails, rate limiting (429), startup configuration, and that a reset of the demo data does not reuse booking ids.
+*   **Read endpoints (WebApplicationFactory):** events and seats are readable without a token; a seat follows its booking (`available`, `held`, `booked`, also for a hold that ran out and was not swept yet); the seat response has exactly its six fields and nothing about the holder; paging limits are rejected with `400`; a booking is `403` for another user and for an admin; reads have their own rate limit.
+*   **Forwarded headers:** behind a trusted proxy each client address gets its own limit; a forwarded address from anyone else, or one a client put in front of the proxy's, is ignored.
+*   **Swagger:** the document is served in Development only, and only the endpoints that need a token are marked with the bearer scheme.
 *   **Migrations:** every integration test runs on a schema built by the EF Core migrations, and one test upgrades a database from the first migration.
 
 ## Roadmap
@@ -162,9 +172,10 @@ Done:
 *   [x] Seat holds with expiry.
 *   [x] Simulated payment between hold and confirmation, with refunds.
 *   [x] Transactional outbox and inbox.
+*   [x] Read endpoints for events, seats and bookings.
 
 Not implemented yet:
 
-*   [ ] Read endpoints for events, seats and bookings.
+*   [ ] The event history of a booking.
 *   [ ] Live updates with SignalR.
 *   [ ] A hosted live demo.

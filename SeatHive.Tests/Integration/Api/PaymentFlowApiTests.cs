@@ -108,7 +108,7 @@ namespace SeatHive.Tests.Integration.Api
             var response = await client.PostAsync(ConfirmUrl(booking.Id), null);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("Confirmed", body.GetProperty("status").GetString());
+            Assert.Equal("confirmed", body.GetProperty("status").GetString());
         }
 
         [Fact]

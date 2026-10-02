@@ -93,7 +93,7 @@ namespace SeatHive.Tests.Integration.Api
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.True(body.GetProperty("bookingId").GetInt32() > 0);
             Assert.Equal(seatId, body.GetProperty("seatId").GetInt32());
-            Assert.Equal("Held", body.GetProperty("status").GetString());
+            Assert.Equal("held", body.GetProperty("status").GetString());
             // Default hold duration is 5 minutes.
             Assert.Equal(_fixture.Api.Clock.GetUtcNow().AddMinutes(5), body.GetProperty("expiresAt").GetDateTimeOffset());
             Assert.Equal(1, await CountBookingsAsync(seatId, "Held"));
@@ -271,7 +271,7 @@ namespace SeatHive.Tests.Integration.Api
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal(bookingId, body.GetProperty("bookingId").GetInt32());
             Assert.Equal(seatId, body.GetProperty("seatId").GetInt32());
-            Assert.Equal("PaymentPending", body.GetProperty("status").GetString());
+            Assert.Equal("paymentPending", body.GetProperty("status").GetString());
             Assert.Equal(1, await CountBookingsAsync(seatId, "PaymentPending"));
             Assert.Equal(0, await CountBookingsAsync(seatId, "Confirmed"));
 
@@ -292,7 +292,7 @@ namespace SeatHive.Tests.Integration.Api
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal("Confirmed", body.GetProperty("status").GetString());
+            Assert.Equal("confirmed", body.GetProperty("status").GetString());
             Assert.Equal(1, await CountBookingsAsync(seatId, "Confirmed"));
         }
 
@@ -370,7 +370,7 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             var body = await response.Content.ReadFromJsonAsync<JsonElement>();
             Assert.Equal(bookingId, body.GetProperty("bookingId").GetInt32());
-            Assert.Equal("Released", body.GetProperty("status").GetString());
+            Assert.Equal("released", body.GetProperty("status").GetString());
             Assert.Equal(1, await CountBookingsAsync(seatId, "Released"));
 
             await HoldAsync(other, seatId);

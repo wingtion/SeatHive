@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using SeatHive.Api.Consumers;
 using SeatHive.Api.Data;
 using SeatHive.Api.Services;
@@ -42,7 +44,23 @@ var rabbitPassword = RequiredSetting("RabbitMQ:Password");
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(dbConnectionString));
 
-builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
+// Behind the reverse proxy the client's address and scheme come from the forwarded headers of the trusted proxies.
+var behindTrustedProxy = builder.Services.AddTrustedProxies(builder.Configuration);
+
+// Errors that no controller writes (no token, wrong role, rate limit) get the same ProblemDetails body with a "code".
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = context =>
+    {
+        var code = ErrorCodes.ForStatus(context.ProblemDetails.Status);
+        if (code != null) context.ProblemDetails.Extensions.TryAdd("code", code);
+    };
+});
+
+builder.Services.AddControllers()
+    // Enums are sent as camelCase strings everywhere ("held", "paymentPending"), like the property names.
+    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)))
+    .ConfigureApiBehaviorOptions(options =>
 {
     // Validation errors keep the standard ProblemDetails shape and get a machine-readable code like every other error.
     options.InvalidModelStateResponseFactory = context =>
@@ -102,6 +120,7 @@ builder.Services.AddSwaggerGen(c =>
 builder.Services.AddScoped<SeatHive.Api.Services.BookingService>();
 builder.Services.AddScoped<SeatHive.Api.Services.IRedisLockService, SeatHive.Api.Services.RedisLockService>();
 builder.Services.AddScoped<SeatHive.Api.Services.AuthService>();
+builder.Services.AddScoped<SeatStatusQuery>();
 
 // Hold timing goes through TimeProvider so tests can move the clock.
 builder.Services.AddSingleton(TimeProvider.System);
@@ -127,9 +146,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-// Requests per minute. Auth is limited per IP address, booking per user.
+// Requests per minute. Auth is limited per IP address, booking per user, reads per user or (without a token) per IP address.
 var authPermitLimit = builder.Configuration.GetValue("RateLimiting:Auth:PermitLimit", 10);
 var bookingPermitLimit = builder.Configuration.GetValue("RateLimiting:Booking:PermitLimit", 30);
+var readPermitLimit = builder.Configuration.GetValue("RateLimiting:Read:PermitLimit", 120);
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -144,6 +164,12 @@ builder.Services.AddRateLimiter(options =>
         RateLimitPartition.GetFixedWindowLimiter(
             httpContext.User.FindFirst("sub")?.Value ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = bookingPermitLimit, Window = TimeSpan.FromMinutes(1) }));
+
+    // A limit of its own, so reading (and polling) never uses up what a user needs for booking.
+    options.AddPolicy(RateLimitPolicies.Read, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.FindFirst("sub")?.Value ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = readPermitLimit, Window = TimeSpan.FromMinutes(1) }));
 });
 
 var app = builder.Build();
@@ -170,6 +196,15 @@ using (var scope = app.Services.CreateScope())
 
     await AdminSeeder.SeedAsync(db, app.Configuration, app.Logger);
 }
+
+// First, so everything after it (HTTPS redirection, rate limits) sees the real client address and scheme.
+if (behindTrustedProxy)
+{
+    app.UseForwardedHeaders();
+}
+
+// Gives a response that has a status code but no body (401, 403, 429) a ProblemDetails body.
+app.UseStatusCodePages();
 
 if (app.Environment.IsDevelopment())
 {
