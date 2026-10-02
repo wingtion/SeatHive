@@ -18,6 +18,7 @@ namespace SeatHive.Api.Consumers
         IConsumer<BookingConfirmed>,
         IConsumer<RefundRequested>,
         IConsumer<RefundCompleted>,
+        IConsumer<RefundFailed>,
         IConsumer<NotificationSent>
     {
         private readonly AppDbContext _context;
@@ -79,6 +80,12 @@ namespace SeatHive.Api.Consumers
         {
             var m = context.Message;
             return RecordAsync(context, BookingEventType.RefundCompleted, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId);
+        }
+
+        public Task Consume(ConsumeContext<RefundFailed> context)
+        {
+            var m = context.Message;
+            return RecordAsync(context, BookingEventType.RefundFailed, m.BookingId, m.SeatId, m.UserId, m.OccurredAt, m.PaymentId, m.Reason);
         }
 
         public Task Consume(ConsumeContext<NotificationSent> context)

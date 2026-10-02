@@ -123,7 +123,8 @@ namespace SeatHive.Tests.Integration.Api
         {
             var (_, bookingId) = await HoldAsync();
             // The owner confirmed, but the payment result did not arrive before the sweeper gave the seat up.
-            var paymentId = Guid.NewGuid();
+            // The payment was really charged at the provider.
+            var paymentId = await _host.ChargeAsync();
             await using (var db = _fixture.CreateContext(_database))
             {
                 await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s

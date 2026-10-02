@@ -52,16 +52,57 @@ namespace SeatHive.Tests.Integration
             return provider;
         }
 
-        private static async Task<Guid> AddChargeAsync(ServiceProvider services, DateTimeOffset chargedAt)
+        // A charge whose result was announced right away, as it normally is.
+        private static Task<Guid> AddChargeAsync(ServiceProvider services, DateTimeOffset chargedAt)
+        {
+            return AddChargeAsync(services, chargedAt, announcedAt: chargedAt);
+        }
+
+        // announcedAt null: the result of the charge has not been announced yet.
+        private static async Task<Guid> AddChargeAsync(ServiceProvider services, DateTimeOffset chargedAt, DateTimeOffset? announcedAt)
         {
             var key = Guid.NewGuid();
 
             await using var scope = services.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<WorkerDbContext>();
-            db.SimulatedCharges.Add(new SimulatedCharge { IdempotencyKey = key, Succeeded = true, ChargedAt = chargedAt.UtcDateTime });
+            db.SimulatedCharges.Add(new SimulatedCharge
+            {
+                IdempotencyKey = key,
+                Succeeded = true,
+                ChargedAt = chargedAt.UtcDateTime,
+                AnnouncedAt = announcedAt?.UtcDateTime
+            });
             await db.SaveChangesAsync();
 
             return key;
+        }
+
+        [Fact]
+        public async Task AChargeWhoseResultWasNotAnnouncedYet_ShouldNeverBeDeleted()
+        {
+            await using var services = await BuildWorkerServicesAsync();
+            // The result is still on its way. Without the charge it could not be announced any more.
+            var waiting = await AddChargeAsync(services, Now.AddDays(-30), announcedAt: null);
+
+            var deleted = await DeleteExpiredAsync(services);
+
+            Assert.Equal(0, deleted);
+            Assert.Equal(new[] { waiting }, await RemainingKeysAsync(services));
+        }
+
+        [Fact]
+        public async Task Retention_ShouldCountFromTheAnnouncement_NotFromTheCharge()
+        {
+            await using var services = await BuildWorkerServicesAsync();
+            // Both were charged long ago. One was announced only yesterday: a refund for it may still come.
+            var announcedYesterday = await AddChargeAsync(services, Now.AddDays(-10), announcedAt: Now.AddDays(-1));
+            var announcedLongAgo = await AddChargeAsync(services, Now.AddDays(-10), announcedAt: Now.AddDays(-8));
+
+            var deleted = await DeleteExpiredAsync(services);
+
+            Assert.Equal(1, deleted);
+            Assert.Equal(new[] { announcedYesterday }, await RemainingKeysAsync(services));
+            Assert.DoesNotContain(announcedLongAgo, await RemainingKeysAsync(services));
         }
 
         private static async Task<List<Guid>> RemainingKeysAsync(ServiceProvider services)

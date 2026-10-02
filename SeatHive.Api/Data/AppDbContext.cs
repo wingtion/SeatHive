@@ -17,6 +17,12 @@ namespace SeatHive.Api.Data
         public DbSet<Booking> Bookings { get; set; }
         public DbSet<BookingEvent> BookingEvents { get; set; }
 
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            // Here rather than where the context is registered, so no host can be set up without it.
+            optionsBuilder.AddInterceptors(InboxStateDetachInterceptor.Instance);
+        }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             // Emails are stored lowercase, so this also blocks duplicates that differ only by casing.

@@ -17,6 +17,7 @@ namespace SeatHive.Tests.Integration.Api
     [Trait(TestCategories.Trait, TestCategories.EndToEnd)]
     public class BookingHistoryTests : IClassFixture<HistoryHost>
     {
+        private readonly HistoryHost _host;
         private readonly ContainersFixture _fixture;
         private readonly ApiFactory _api;
         private readonly string _database;
@@ -24,6 +25,7 @@ namespace SeatHive.Tests.Integration.Api
         // One host for the whole class. Its clock only moves forward, and every test works on its own booking.
         public BookingHistoryTests(HistoryHost host)
         {
+            _host = host;
             _fixture = host.Fixture;
             _api = host.Api;
             _database = host.Database;
@@ -170,7 +172,8 @@ namespace SeatHive.Tests.Integration.Api
         {
             var (client, bookingId, seatId, userId) = await HoldAsync();
             // The owner confirmed, but the payment result did not arrive before the sweeper gave the seat up.
-            var paymentId = Guid.NewGuid();
+            // The payment was really charged at the provider.
+            var paymentId = await _host.ChargeAsync();
             await using (var db = _fixture.CreateContext(_database))
             {
                 await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s
@@ -184,6 +187,30 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal(new[] { "seatHeld", "paymentSucceeded", "refundRequested", "refundCompleted" }, Types(items));
             Assert.Equal("hold_expired", items[2].GetProperty("detail").GetString());
             Assert.Equal(new[] { false, true, true, true }, items.Select(i => i.GetProperty("simulated").GetBoolean()));
+        }
+
+        [Fact]
+        public async Task RefundThatCouldNotBeMade_ShouldBeInTheHistory_AsFailed()
+        {
+            var (client, bookingId, seatId, userId) = await HoldAsync();
+            // A payment result for a payment the provider knows nothing about: there is no charge to give back.
+            var paymentId = Guid.NewGuid();
+            await using (var db = _fixture.CreateContext(_database))
+            {
+                await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s
+                    .SetProperty(b => b.Status, BookingStatus.Expired)
+                    .SetProperty(b => b.PaymentId, paymentId));
+            }
+
+            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, seatId, userId, Now(), paymentId));
+
+            // The history says what happened: the refund was asked for and could not be made. It does not say "completed".
+            var items = await WaitForHistoryAsync(client, bookingId, 4);
+            Assert.Equal(new[] { "seatHeld", "paymentSucceeded", "refundRequested", "refundFailed" }, Types(items));
+            Assert.Equal("charge_not_found", items[3].GetProperty("detail").GetString());
+            Assert.True(items[3].GetProperty("simulated").GetBoolean());
+            Assert.Equal(paymentId, items[3].GetProperty("paymentId").GetGuid());
+            Assert.Equal(0, _api.CountDelivered<RefundCompleted>(e => e.BookingId == bookingId));
         }
 
         [Fact]

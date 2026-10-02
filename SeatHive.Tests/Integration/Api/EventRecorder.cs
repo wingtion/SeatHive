@@ -64,6 +64,7 @@ namespace SeatHive.Tests.Integration.Api
             configurator.AddRecorder<BookingConfirmed>();
             configurator.AddRecorder<RefundRequested>();
             configurator.AddRecorder<RefundCompleted>();
+            configurator.AddRecorder<RefundFailed>();
             configurator.AddRecorder<NotificationSent>();
             configurator.AddRecorder<DemoDataReset>();
         }

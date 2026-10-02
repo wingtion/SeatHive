@@ -12,6 +12,7 @@ namespace SeatHive.Api.Models
         BookingConfirmed,
         RefundRequested,
         RefundCompleted,
+        RefundFailed,
         NotificationSent
     }
 

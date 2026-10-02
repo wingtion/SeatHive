@@ -17,7 +17,8 @@ namespace SeatHive.Api.Services
         // Payments, refunds and notifications are simulated by the Worker; holds and confirmations are real.
         public static bool IsSimulated(BookingEventType type) => type is
             BookingEventType.PaymentRequested or BookingEventType.PaymentSucceeded or BookingEventType.PaymentFailed
-            or BookingEventType.RefundRequested or BookingEventType.RefundCompleted or BookingEventType.NotificationSent;
+            or BookingEventType.RefundRequested or BookingEventType.RefundCompleted or BookingEventType.RefundFailed
+            or BookingEventType.NotificationSent;
 
         public async Task<PagedResponse<BookingHistoryItem>> ForBookingAsync(int bookingId, int page, int pageSize, CancellationToken cancellationToken = default)
         {
@@ -33,7 +34,7 @@ namespace SeatHive.Api.Services
                     : e.Type == BookingEventType.PaymentRequested ? 1
                     : e.Type == BookingEventType.PaymentSucceeded || e.Type == BookingEventType.PaymentFailed ? 2
                     : e.Type == BookingEventType.BookingConfirmed || e.Type == BookingEventType.RefundRequested ? 3
-                    : e.Type == BookingEventType.NotificationSent || e.Type == BookingEventType.RefundCompleted ? 4
+                    : e.Type == BookingEventType.NotificationSent || e.Type == BookingEventType.RefundCompleted || e.Type == BookingEventType.RefundFailed ? 4
                     : 5)
                 // 3. Still the same: the order in which they were recorded.
                 .ThenBy(e => e.Sequence)

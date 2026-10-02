@@ -23,6 +23,12 @@ namespace SeatHive.Worker.Data
             npgsql.MigrationsHistoryTable("__EFMigrationsHistory", Schema);
         }
 
+        protected override void OnConfiguring(DbContextOptionsBuilder optionsBuilder)
+        {
+            // Here rather than where the context is registered, so no host can be set up without it.
+            optionsBuilder.AddInterceptors(InboxStateDetachInterceptor.Instance);
+        }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.HasDefaultSchema(Schema);

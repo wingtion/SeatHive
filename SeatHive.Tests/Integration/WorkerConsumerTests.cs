@@ -72,6 +72,11 @@ namespace SeatHive.Tests.Integration
                 return result;
             }
 
+            public Task<RefundOutcome> RefundAsync(Guid idempotencyKey, CancellationToken cancellationToken = default)
+            {
+                return _inner.RefundAsync(idempotencyKey, cancellationToken);
+            }
+
             public Task<int> DeleteExpiredChargesAsync(CancellationToken cancellationToken = default)
             {
                 return _inner.DeleteExpiredChargesAsync(cancellationToken);
@@ -237,11 +242,7 @@ namespace SeatHive.Tests.Integration
         [InlineData(false)]
         public async Task SamePaymentRequestDeliveredTwice_ShouldChargeOnce_AndProduceOneResult(bool sameMessageId)
         {
-            // A Worker of its own, freshly started, as this test has always had. On a Worker that is already warm
-            // the two deliveries reach the second step at the very same moment, and then that step has been seen
-            // to run twice and announce two results (about 13 of 200 tries). That is a race in the Worker,
-            // not in this test; until it is fixed, this test only covers deliveries that do not overlap exactly.
-            await using var worker = await StartWorkerAsync(_fixture, failureRate: 0);
+            var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var calls = worker.GetRequiredService<ChargeCalls>();
             var request = NewPaymentRequest();
@@ -270,12 +271,7 @@ namespace SeatHive.Tests.Integration
 
             // One charge at the provider, one result for the API.
             Assert.Equal(1, await WithDbAsync(worker, db => db.SimulatedCharges.CountAsync(c => c.IdempotencyKey == request.PaymentId)));
-            // "One result" means the result was produced once. That one message can still arrive twice: when the
-            // second delivery comes in while the first is sending what it stored in the outbox, both send it.
-            // The outbox promises at least once, and a consumer with an inbox (the API's) takes it once.
-            // So what is counted here is distinct results: had the consumer run twice, their timestamps would differ.
-            var results = worker.GetRequiredService<EventLog>().Of<PaymentSucceeded>(e => e.BookingId == request.BookingId);
-            Assert.Single(results.Distinct());
+            Assert.Equal(1, Count<PaymentSucceeded>(worker, request.BookingId, e => e.BookingId));
             Assert.Equal(0, Count<PaymentFailed>(worker, request.BookingId, e => e.BookingId));
         }
 
@@ -329,12 +325,116 @@ namespace SeatHive.Tests.Integration
             var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var bookingId = Interlocked.Increment(ref _nextBookingId);
-            var paymentId = Guid.NewGuid();
+            var paymentId = await ChargeAsync(worker);
 
             await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"));
 
             var refunded = await DeliveredAsync<RefundCompleted>(worker, bookingId, e => e.BookingId);
             Assert.Equal((7, 9, paymentId), (refunded.SeatId, refunded.UserId, refunded.PaymentId));
+            Assert.NotNull((await ReadChargeAsync(worker, paymentId)).RefundedAt);
+            Assert.Equal(0, Count<RefundFailed>(worker, bookingId, e => e.BookingId));
+        }
+
+        // Charges a payment at the provider, as a payment request does, and returns its id.
+        private static async Task<Guid> ChargeAsync(ServiceProvider worker, bool forceFailure = false)
+        {
+            var paymentId = Guid.NewGuid();
+
+            await using var scope = worker.CreateAsyncScope();
+            await scope.ServiceProvider.GetRequiredService<SimulatedPaymentProvider>().ChargeAsync(paymentId, forceFailure);
+
+            return paymentId;
+        }
+
+        private static Task<SimulatedCharge> ReadChargeAsync(ServiceProvider worker, Guid paymentId)
+        {
+            return WithDbAsync(worker, db => db.SimulatedCharges.AsNoTracking().SingleAsync(c => c.IdempotencyKey == paymentId));
+        }
+
+        // Waits until the Worker is done with a message, for messages that are expected to produce nothing.
+        private static Task ConsumedAsync(ServiceProvider worker, Guid messageId)
+        {
+            return WaitUntilAsync(
+                () => WithDbAsync(worker, db => db.Set<MassTransit.EntityFrameworkCoreIntegration.InboxState>()
+                    .AnyAsync(i => i.MessageId == messageId && i.Consumed != null)),
+                $"message {messageId} was consumed");
+        }
+
+        [Fact]
+        public async Task RefundRequested_WithoutACharge_ShouldPublishRefundFailed_AndNotPretendToRefund()
+        {
+            var worker = _defaultWorker;
+            var harness = worker.GetRequiredService<ITestHarness>();
+            var bookingId = Interlocked.Increment(ref _nextBookingId);
+            // A payment the provider has never charged (or has forgotten).
+            var paymentId = Guid.NewGuid();
+
+            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"));
+
+            var failed = await DeliveredAsync<RefundFailed>(worker, bookingId, e => e.BookingId);
+            Assert.Equal((7, 9, paymentId, "charge_not_found"), (failed.SeatId, failed.UserId, failed.PaymentId, failed.Reason));
+            Assert.Equal(0, Count<RefundCompleted>(worker, bookingId, e => e.BookingId));
+        }
+
+        [Fact]
+        public async Task RefundRequested_ForAChargeThatFailed_ShouldPublishRefundFailed()
+        {
+            var worker = _defaultWorker;
+            var harness = worker.GetRequiredService<ITestHarness>();
+            var bookingId = Interlocked.Increment(ref _nextBookingId);
+            // The charge failed, so no money was taken and there is nothing to give back.
+            var paymentId = await ChargeAsync(worker, forceFailure: true);
+
+            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"));
+
+            var failed = await DeliveredAsync<RefundFailed>(worker, bookingId, e => e.BookingId);
+            Assert.Equal("charge_not_successful", failed.Reason);
+            Assert.Equal(0, Count<RefundCompleted>(worker, bookingId, e => e.BookingId));
+            Assert.Null((await ReadChargeAsync(worker, paymentId)).RefundedAt);
+        }
+
+        // Two separate messages, so the inbox does not help here: only the charge itself can say "already refunded".
+        [Fact]
+        public async Task RefundRequestedAgain_AsANewMessage_ShouldNotRefundASecondTime()
+        {
+            var worker = _defaultWorker;
+            var harness = worker.GetRequiredService<ITestHarness>();
+            var bookingId = Interlocked.Increment(ref _nextBookingId);
+            var paymentId = await ChargeAsync(worker);
+            var request = new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired");
+
+            await harness.Bus.Publish(request);
+            await DeliveredAsync<RefundCompleted>(worker, bookingId, e => e.BookingId);
+            var refundedAt = (await ReadChargeAsync(worker, paymentId)).RefundedAt;
+
+            var secondMessageId = NewId.NextGuid();
+            await harness.Bus.Publish(request, context => context.MessageId = secondMessageId);
+            await ConsumedAsync(worker, secondMessageId);
+
+            Assert.Equal(1, Count<RefundCompleted>(worker, bookingId, e => e.BookingId));
+            Assert.Equal(0, Count<RefundFailed>(worker, bookingId, e => e.BookingId));
+            Assert.Equal(refundedAt, (await ReadChargeAsync(worker, paymentId)).RefundedAt);
+        }
+
+        // The same for the payment's result: two separate messages about one charge, one announcement.
+        [Fact]
+        public async Task PaymentOutcomeAgain_AsANewMessage_ShouldNotBeAnnouncedASecondTime()
+        {
+            var worker = _defaultWorker;
+            var harness = worker.GetRequiredService<ITestHarness>();
+            var bookingId = Interlocked.Increment(ref _nextBookingId);
+            var paymentId = await ChargeAsync(worker);
+            var outcome = new SeatHive.Worker.Messages.PaymentCharged(bookingId, 7, 9, paymentId, true, null);
+
+            await harness.Bus.Publish(outcome);
+            await DeliveredAsync<PaymentSucceeded>(worker, bookingId, e => e.BookingId);
+            Assert.NotNull((await ReadChargeAsync(worker, paymentId)).AnnouncedAt);
+
+            var secondMessageId = NewId.NextGuid();
+            await harness.Bus.Publish(outcome, context => context.MessageId = secondMessageId);
+            await ConsumedAsync(worker, secondMessageId);
+
+            Assert.Equal(1, Count<PaymentSucceeded>(worker, bookingId, e => e.BookingId));
         }
 
         [Fact]
@@ -351,6 +451,107 @@ namespace SeatHive.Tests.Integration
             // Nothing is really sent, and the event says so.
             Assert.Equal(BookingConfirmedConsumer.Channel, sent.Channel);
             Assert.Equal("simulated", sent.Channel);
+        }
+
+        // ---- The same message twice at the very same moment ----
+        //
+        // A broker may deliver a message twice, and the two deliveries may be worked on at the same time.
+        // On a Worker that is already warm they really overlap, so this is tried many times on the shared one:
+        // before the fix about one try in fifteen ran the consumer twice.
+
+        private const int OverlapTries = 100;
+
+        // Sends createMessage(bookingId, paymentId) twice at once, OverlapTries times, each time for a new booking,
+        // and returns for every booking what came out. withCharge first makes the provider charge the payment,
+        // so the payment exists on the provider's side like it would in the real flow.
+        private async Task<List<List<TResult>>> DeliverEachTwiceAtOnceAsync<TMessage, TResult>(
+            Func<int, Guid, TMessage> createMessage, Func<TResult, int> bookingIdOf, bool withCharge)
+            where TMessage : class
+            where TResult : class
+        {
+            var worker = _defaultWorker;
+            var harness = worker.GetRequiredService<ITestHarness>();
+            var log = worker.GetRequiredService<EventLog>();
+            var bookingIds = new List<int>();
+
+            for (var i = 0; i < OverlapTries; i++)
+            {
+                var bookingId = Interlocked.Increment(ref _nextBookingId);
+                var paymentId = Guid.NewGuid();
+                if (withCharge)
+                {
+                    await using var scope = worker.CreateAsyncScope();
+                    await scope.ServiceProvider.GetRequiredService<SimulatedPaymentProvider>().ChargeAsync(paymentId, forceFailure: false);
+                }
+
+                var message = createMessage(bookingId, paymentId);
+                await Task.WhenAll(
+                    Task.Run(() => harness.Bus.Publish(message, context => context.MessageId = paymentId)),
+                    Task.Run(() => harness.Bus.Publish(message, context => context.MessageId = paymentId)));
+                bookingIds.Add(bookingId);
+            }
+
+            foreach (var bookingId in bookingIds)
+            {
+                await log.WaitForAsync<TResult>(result => bookingIdOf(result) == bookingId);
+            }
+
+            // A second result would come right behind the first. Wait until nothing new has arrived for a while.
+            var seen = -1;
+            while (true)
+            {
+                var now = log.Of<TResult>(result => bookingIds.Contains(bookingIdOf(result))).Count;
+                if (now == seen) break;
+                seen = now;
+                await Task.Delay(500);
+            }
+
+            return bookingIds.Select(bookingId => log.Of<TResult>(result => bookingIdOf(result) == bookingId)).ToList();
+        }
+
+        // Each try must have produced its result once, and that result must have been sent once.
+        private static void AssertOneResultEach<TResult>(List<List<TResult>> results)
+        {
+            var producedMoreThanOnce = results.Count(r => r.Distinct().Count() > 1);
+            var sentMoreThanOnce = results.Count(r => r.Count > 1);
+
+            Assert.True(producedMoreThanOnce == 0 && sentMoreThanOnce == 0,
+                $"Of {results.Count} tries, {producedMoreThanOnce} produced more than one result (the consumer ran twice) " +
+                $"and {sentMoreThanOnce} sent a result more than once.");
+        }
+
+        [Fact]
+        public async Task SamePaymentOutcome_ArrivingTwiceAtOnce_ShouldAnnounceOneResult()
+        {
+            var results = await DeliverEachTwiceAtOnceAsync<SeatHive.Worker.Messages.PaymentCharged, PaymentSucceeded>(
+                (bookingId, paymentId) => new SeatHive.Worker.Messages.PaymentCharged(bookingId, 7, 9, paymentId, true, null),
+                result => result.BookingId,
+                withCharge: true);
+
+            AssertOneResultEach(results);
+        }
+
+        [Fact]
+        public async Task SameRefundRequest_ArrivingTwiceAtOnce_ShouldRefundOnce()
+        {
+            var results = await DeliverEachTwiceAtOnceAsync<RefundRequested, RefundCompleted>(
+                (bookingId, paymentId) => new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"),
+                result => result.BookingId,
+                withCharge: true);
+
+            AssertOneResultEach(results);
+        }
+
+        // The notification has nothing of its own to check against: here only the inbox keeps it to one.
+        [Fact]
+        public async Task SameConfirmation_ArrivingTwiceAtOnce_ShouldNotifyOnce()
+        {
+            var results = await DeliverEachTwiceAtOnceAsync<BookingConfirmed, NotificationSent>(
+                (bookingId, paymentId) => new BookingConfirmed(bookingId, 7, 9, DateTime.UtcNow, paymentId),
+                result => result.BookingId,
+                withCharge: false);
+
+            AssertOneResultEach(results);
         }
     }
 }

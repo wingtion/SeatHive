@@ -10,5 +10,11 @@ namespace SeatHive.Worker.Data
         public bool Succeeded { get; set; }
         public string? Reason { get; set; }
         public DateTime ChargedAt { get; set; }
+
+        // When the result of this charge was announced to the booking system. It is announced once; null until then.
+        public DateTime? AnnouncedAt { get; set; }
+
+        // When the charge was given back. A charge is given back at most once; null until then.
+        public DateTime? RefundedAt { get; set; }
     }
 }

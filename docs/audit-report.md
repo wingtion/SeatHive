@@ -185,6 +185,14 @@ Eksikler, öncelik sırasıyla:
 
 Doğrulama: her adımda `dotnet test`; 1. adım için Testcontainers ile eşzamanlılık testinin art arda çalıştırılması; 2. adım için temiz klonda `docker compose up --build` ve Swagger üzerinden register → login → rezervasyon → worker logunda event.
 
+## Sonradan bulunan: inbox aynı mesajı iki kez işleyebiliyordu (adım 5d sırasında bulundu ve düzeltildi)
+
+- **Belirti:** aynı mesaj aynı anda iki kez teslim edilince consumer iki kez çalışabiliyor (ölçüm: ısınmış Worker'da çiftlerin yaklaşık %6,5'i), ayrıca aynı outbox mesajı iki kez gönderilebiliyordu. Worker'da görünür sonucu: bir ödeme için iki `PaymentSucceeded`, bir iade talebi için iki `RefundCompleted`, bir onay için iki `NotificationSent`.
+- **Kök neden:** MassTransit 8.5.11 inbox satırını bir transaction'da ekleyip consumer'ı aynı `DbContext` üzerinde sonraki bir transaction'da çalıştırıyor; EF Core zaten izlediği nesneyi sorgu sonucuyla güncellemediği için `SELECT ... FOR UPDATE` bayat nesneyi (`Consumed = null`) döndürüyor. 8.5.11 son 8.x sürümü; `develop` dalında da aynı. İlgili: MassTransit issue 4474.
+- **Neden daha önce görünmedi:** mevcut test her seferinde yeni başlatılmış bir host kullandığı için iki teslim tam çakışmıyordu.
+- **Düzeltme:** (1) `InboxStateDetachInterceptor` (API ve Worker): her transaction bitiminde izlenen inbox satırları bırakılıyor. (2) Alan koruması: `SimulatedCharges.AnnouncedAt` ve `RefundedAt` üzerinde koşullu güncelleme; ödeme sonucu ve iade, inbox'tan bağımsız olarak bir kez yayınlanıyor. (3) Tahsilatı olmayan iade artık `RefundCompleted` değil `RefundFailed` ile kapanıyor. (4) Temizlik, sonucu duyurulmamış tahsilatı silmiyor; saklama süresi duyurudan sayılıyor.
+- **Kalan sınır:** bildirim yalnızca inbox'a (interceptor'a) dayanıyor. Sonucu duyurulduktan 7 günden sonra istenen iade tahsilatı bulamaz ve `RefundFailed` olur. Migration, yükseltme anındaki son bir saatin tahsilatlarını "duyurulmamış" bırakır; bu satırlar temizlenmez.
+
 ## Ertelenen yükseltmeler
 
 net10.0 geçişinde aşağıdaki üç paket bilerek en güncel büyük sürüme çıkarılmadı. O adımın kuralı davranış değişikliği ve refactor yapmamaktı; üçü de bu kuralı zorluyordu.

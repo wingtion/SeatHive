@@ -1,5 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using SeatHive.Worker.Data;
+using SeatHive.Worker.Payments;
 
 namespace SeatHive.Tests.Integration.Api
 {
@@ -41,6 +43,19 @@ namespace SeatHive.Tests.Integration.Api
                 .Options;
             await using var db = new WorkerDbContext(options);
             await db.Database.MigrateAsync();
+        }
+
+        // Charges a payment at the simulated provider, as the Worker does when a payment is requested,
+        // and returns its id. For tests that deliver the payment's result by hand.
+        public async Task<Guid> ChargeAsync()
+        {
+            var paymentId = Guid.NewGuid();
+
+            await using var scope = Api.Services.CreateAsyncScope();
+            var result = await scope.ServiceProvider.GetRequiredService<ISimulatedPaymentProvider>().ChargeAsync(paymentId, forceFailure: false);
+            Assert.True(result.Succeeded);
+
+            return paymentId;
         }
 
         public Task InitializeAsync() => MigrateWorkerAsync(Database);

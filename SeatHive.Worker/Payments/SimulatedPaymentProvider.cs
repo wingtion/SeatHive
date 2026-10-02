@@ -57,12 +57,34 @@ namespace SeatHive.Worker.Payments
             return (await FindAsync(idempotencyKey, cancellationToken))!;
         }
 
+        public async Task<RefundOutcome> RefundAsync(Guid idempotencyKey, CancellationToken cancellationToken = default)
+        {
+            var now = _timeProvider.GetUtcNow().UtcDateTime;
+
+            // One conditional update: of two refunds of the same charge, whenever they come, only one matches the row.
+            var refunded = await _context.SimulatedCharges
+                .Where(c => c.IdempotencyKey == idempotencyKey && c.Succeeded && c.RefundedAt == null)
+                .ExecuteUpdateAsync(s => s.SetProperty(c => c.RefundedAt, now), cancellationToken);
+            if (refunded == 1) return RefundOutcome.Refunded;
+
+            // Nothing changed; find out why.
+            var charge = await _context.SimulatedCharges.AsNoTracking()
+                .FirstOrDefaultAsync(c => c.IdempotencyKey == idempotencyKey, cancellationToken);
+
+            return charge == null ? RefundOutcome.ChargeNotFound
+                : !charge.Succeeded ? RefundOutcome.ChargeNotSuccessful
+                : RefundOutcome.AlreadyRefunded;
+        }
+
         public async Task<int> DeleteExpiredChargesAsync(CancellationToken cancellationToken = default)
         {
             var cutoff = _timeProvider.GetUtcNow().UtcDateTime.AddDays(-_options.ChargeRetentionDays);
 
+            // The retention counts from the announcement of the result, not from the charge:
+            // a charge whose result is still on its way is needed to announce it (AnnouncedAt is null, which never
+            // matches), and after the announcement a refund may still be asked for.
             return await _context.SimulatedCharges
-                .Where(c => c.ChargedAt < cutoff)
+                .Where(c => c.AnnouncedAt < cutoff)
                 .ExecuteDeleteAsync(cancellationToken);
         }
 

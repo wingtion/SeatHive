@@ -14,4 +14,8 @@ namespace SeatHive.Shared.Events
     public record RefundRequested(int BookingId, int SeatId, int UserId, DateTime OccurredAt, Guid PaymentId, string Reason);
 
     public record RefundCompleted(int BookingId, int SeatId, int UserId, DateTime OccurredAt, Guid PaymentId);
+
+    // The refund could not be made: the provider has no successful charge for this payment to give back.
+    // Reason is "charge_not_found" or "charge_not_successful".
+    public record RefundFailed(int BookingId, int SeatId, int UserId, DateTime OccurredAt, Guid PaymentId, string Reason);
 }
