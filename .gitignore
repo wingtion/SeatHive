@@ -15,3 +15,6 @@ SeatHive.Tests/bin/
 SeatHive.Tests/obj/
 SeatHive.Shared/bin/
 SeatHive.Shared/obj/
+
+# Claude Code machine-local settings
+.claude/settings.local.json
