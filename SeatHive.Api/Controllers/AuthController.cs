@@ -40,5 +40,12 @@ namespace SeatHive.Api.Controllers
 
             return Ok(new { Token = token });
         }
+
+        // No body: every call creates a new guest and answers with its token, like a login.
+        [HttpPost("guest")]
+        public async Task<IActionResult> Guest()
+        {
+            return Ok(new { Token = await _authService.CreateGuestAsync() });
+        }
     }
 }

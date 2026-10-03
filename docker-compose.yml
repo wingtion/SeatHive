@@ -24,6 +24,8 @@ services:
       - ReverseProxy__TrustedProxies__0=${CADDY_IP:-172.28.0.10}
       # The front end's origin (https://..., no trailing "/"); browsers on any other origin are turned away. Unset: CORS is off.
       - Cors__AllowedOrigins__0=${CORS_ALLOWED_ORIGIN:-}
+      # The time of day (UTC, HH:mm) at which the demo data is reset every night. Unset: no nightly reset.
+      - DemoReset__DailyAtUtc=${DEMO_RESET_DAILY_AT_UTC:-}
       # No Swagger and no Development settings on a server; docker-compose.override.yml switches to Development locally.
       - ASPNETCORE_ENVIRONMENT=Production
     # No published port: on a server the API is reached through Caddy only.

@@ -146,6 +146,11 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<HoldOptions>(builder.Configuration.GetSection(HoldOptions.SectionName));
 builder.Services.AddHostedService<HoldExpirySweeper>();
 
+// The demo data: the admin's reset and, where DemoReset:DailyAtUtc is set, the same reset once every night.
+builder.Services.AddScoped<DemoDataResetter>();
+builder.Services.Configure<DemoResetOptions>(builder.Configuration.GetSection(DemoResetOptions.SectionName));
+builder.Services.AddHostedService<NightlyDemoReset>();
+
 // The race simulation. The releaser gives up each winner's seat after Simulation:WinnerHoldSeconds.
 builder.Services.Configure<SimulationOptions>(builder.Configuration.GetSection(SimulationOptions.SectionName));
 builder.Services.AddSingleton<RaceWinnerReleaser>();
