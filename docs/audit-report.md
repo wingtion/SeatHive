@@ -214,6 +214,9 @@ net10.0 geçişinde aşağıdaki üç paket bilerek en güncel büyük sürüme 
 
 Sıra:
 
-- **StackExchange.Redis 3.x:** kilit testleri (bölüm 3, madde 1–4) yazıldıktan sonra yapılacak. Böylece K1–K3 düzeltmeleri bilinen bir istemci sürümünde doğrulanır ve yükseltmenin kilit davranışını bozup bozmadığı testlerle görülür.
+- **StackExchange.Redis 3.x:** yapıldı, 3.3.1'e yükseltildi.
+  - Kod değişikliği gerekmedi: 3.0 IO çekirdeğini yeniden yazdı ama API'yi korudu; 3.1'in derleme hatasına çevirdiği eskimiş API'leri kullanmıyorduk; `-warnaserror` build'i temiz. `Pipelines.Sockets.Unofficial` bağımlılığı kalktı.
+  - 3.x'in varsayılan protokolü RESP3 ve bu kabul edildi: testlerde ve compose'da `redis:alpine` Redis 8.10.2, kullandığımız komutların (SET NX PX, EVAL, EXISTS) sonucu iki protokolde aynı.
+  - Doğrulama: kilit, eşzamanlılık, Redis'siz çalışma ve simülasyon testleri 5 kez tekrarlandı; tam suite yeşil. Docker smoke testinde iki script de aynı sonucu verdi: yarışta 1 kazanan ve 19 `seat_locked/busy`; Redis durdurulunca kilitsiz hold, başlatılınca kilidin geri gelmesi; `fail`/`crit` log satırı yok.
 - **Swashbuckle 10.x:** yapıldı (adım 5d, alt adım A): 10.2.3'e yükseltildi, Swagger kurulumu Microsoft.OpenApi 2'ye göre yeniden yazıldı. D6 da kapandı: güvenlik şeması `http`/`bearer`, ve yalnızca token isteyen endpoint'lere uygulanıyor (`AuthorizeOperationFilter`). `SwaggerTests` bunu ve Swagger'ın yalnızca Development'ta açık olduğunu doğruluyor.
 - **xunit.runner.visualstudio 4.x:** xunit v3'e geçiş değerlendirilirken, test altyapısı işleriyle birlikte.
