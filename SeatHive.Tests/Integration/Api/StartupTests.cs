@@ -48,7 +48,7 @@ namespace SeatHive.Tests.Integration.Api
             api.CreateClient();
 
             await using var db = _fixture.CreateContext(connectionString);
-            Assert.Equal(0, await db.Users.CountAsync());
+            Assert.Equal(0, await db.Users.CountAsync(cancellationToken: TestContext.Current.CancellationToken));
         }
     }
 }

@@ -74,7 +74,7 @@ namespace SeatHive.Tests.Integration
             Assert.Equal(3, _mockBus.Invocations.Count);
 
             await using var verifyDb = _fixture.CreateContext();
-            var booking = await verifyDb.Bookings.AsNoTracking().SingleAsync(b => b.SeatId == seatId);
+            var booking = await verifyDb.Bookings.AsNoTracking().SingleAsync(b => b.SeatId == seatId, cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(hold.Booking.Id, booking.Id);
             Assert.Equal(userId, booking.UserId);
             Assert.Equal(BookingStatus.Confirmed, booking.Status);

@@ -28,7 +28,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = _fixture.Api.CreateClient();
 
-            var response = await client.PostAsync(url, null);
+            var response = await client.PostAsync(url, null, TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -39,7 +39,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.SignInAsUserAsync();
 
-            var response = await client.PostAsync(url, null);
+            var response = await client.PostAsync(url, null, TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
         }
@@ -50,7 +50,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.SignInAsAdminAsync();
 
-            var response = await client.PostAsync(url, null);
+            var response = await client.PostAsync(url, null, TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         }
@@ -58,22 +58,23 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Reset_ShouldKeepUsers_AndRestartSeatIds()
         {
+            var ct = TestContext.Current.CancellationToken;
             var email = ApiFactory.UniqueEmail();
             var anonymous = _fixture.Api.CreateClient();
             (await ApiFactory.RegisterAsync(anonymous, email, "Passw0rd!")).EnsureSuccessStatusCode();
             var admin = await _fixture.Api.CreateAdminClientAsync();
 
             // Twice, so the second run proves ids restart instead of continuing.
-            (await admin.PostAsync(ResetUrl, null)).EnsureSuccessStatusCode();
-            (await admin.PostAsync(ResetUrl, null)).EnsureSuccessStatusCode();
+            (await admin.PostAsync(ResetUrl, null, ct)).EnsureSuccessStatusCode();
+            (await admin.PostAsync(ResetUrl, null, ct)).EnsureSuccessStatusCode();
 
             // The user registered before the reset can still log in.
             await ApiFactory.LoginAsync(anonymous, email, "Passw0rd!");
 
             await using var db = _fixture.CreateContext();
-            Assert.Equal(100, await db.Seats.CountAsync());
-            Assert.Equal(1, await db.Seats.MinAsync(s => s.Id));
-            Assert.Equal(1, await db.Events.CountAsync());
+            Assert.Equal(100, await db.Seats.CountAsync(cancellationToken: ct));
+            Assert.Equal(1, await db.Seats.MinAsync(s => s.Id, cancellationToken: ct));
+            Assert.Equal(1, await db.Events.CountAsync(cancellationToken: ct));
         }
 
         [Fact]
@@ -95,7 +96,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = ApiFactory.Authorize(_fixture.Api.CreateClient(), CreateToken(sub: "not-a-number"));
 
-            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = 1 });
+            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = 1 }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }

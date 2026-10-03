@@ -95,7 +95,7 @@ namespace SeatHive.Tests.Integration
             Assert.Equal(first.Booking.ExpiresAt, second.Booking.ExpiresAt);
 
             await using var db = _fixture.CreateContext();
-            Assert.Equal(1, await db.Bookings.CountAsync(b => b.SeatId == seatId));
+            Assert.Equal(1, await db.Bookings.CountAsync(b => b.SeatId == seatId, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         [Fact]
@@ -284,7 +284,7 @@ namespace SeatHive.Tests.Integration
                 var results = await Task.WhenAll(seatIds.Select(seatId => Task.Run(() => HoldAsync(seatId, userId))));
 
                 await using var db = _fixture.CreateContext();
-                var held = await db.Bookings.CountAsync(b => b.UserId == userId && b.Status == BookingStatus.Held);
+                var held = await db.Bookings.CountAsync(b => b.UserId == userId && b.Status == BookingStatus.Held, cancellationToken: TestContext.Current.CancellationToken);
                 var successes = results.Count(r => r.IsSuccess);
                 var rejected = results.Count(r => r.Error == BookingError.HoldLimitReached);
 

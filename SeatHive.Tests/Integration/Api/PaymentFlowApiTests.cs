@@ -96,9 +96,10 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task PaymentSucceeded_ShouldConfirmTheBooking_AndPublishBookingConfirmed()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, booking) = await HoldAndConfirmAsync();
 
-            await _harness.Bus.Publish(Succeeded(booking));
+            await _harness.Bus.Publish(Succeeded(booking), ct);
 
             var confirmed = await DeliveredAsync<BookingConfirmed>(booking.Id, e => e.BookingId);
             Assert.Equal(booking.PaymentId, confirmed.PaymentId);
@@ -106,25 +107,25 @@ namespace SeatHive.Tests.Integration.Api
             Assert.NotNull(saved.ConfirmedAt);
 
             // The owner now gets 200 with the confirmed booking.
-            var response = await client.PostAsync(ConfirmUrl(booking.Id), null);
+            var response = await client.PostAsync(ConfirmUrl(booking.Id), null, ct);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal("confirmed", body.GetProperty("status").GetString());
         }
 
         [Fact]
         public async Task PaymentFailed_ShouldReturnTheBookingToAHold_ThatCanBeConfirmedAgain()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, booking) = await HoldAndConfirmAsync();
 
-            await _harness.Bus.Publish(
-                new PaymentFailed(booking.Id, booking.SeatId, booking.UserId, DateTime.UtcNow, booking.PaymentId!.Value, "declined"));
+            await _harness.Bus.Publish(new PaymentFailed(booking.Id, booking.SeatId, booking.UserId, DateTime.UtcNow, booking.PaymentId!.Value, "declined"), ct);
 
             var held = await _fixture.WaitForBookingStatusAsync(booking.Id, BookingStatus.Held);
             Assert.Equal(booking.ExpiresAt, held.ExpiresAt);
             Assert.Equal(0, CountDelivered<BookingConfirmed>(booking.Id, e => e.BookingId));
 
-            var retry = await client.PostAsync(ConfirmUrl(booking.Id), null);
+            var retry = await client.PostAsync(ConfirmUrl(booking.Id), null, ct);
             Assert.Equal(HttpStatusCode.Accepted, retry.StatusCode);
             Assert.NotEqual(booking.PaymentId, (await _fixture.ReadBookingAsync(booking.Id)).PaymentId);
         }
@@ -132,15 +133,16 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task PaymentSucceeded_ForAnExpiredBooking_ShouldPublishRefundRequested()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, booking) = await HoldAndConfirmAsync();
             // The payment result never came in time and the sweeper gave the seat up.
             await using (var db = _fixture.CreateContext())
             {
                 await db.Bookings.Where(b => b.Id == booking.Id)
-                    .ExecuteUpdateAsync(s => s.SetProperty(b => b.Status, BookingStatus.Expired));
+                    .ExecuteUpdateAsync(s => s.SetProperty(b => b.Status, BookingStatus.Expired), cancellationToken: ct);
             }
 
-            await _harness.Bus.Publish(Succeeded(booking));
+            await _harness.Bus.Publish(Succeeded(booking), ct);
 
             var refund = await DeliveredAsync<RefundRequested>(booking.Id, e => e.BookingId);
             Assert.Equal(booking.PaymentId, refund.PaymentId);
@@ -152,12 +154,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task PaymentSucceeded_AfterTheDemoDataWasReset_ShouldPublishRefundRequested()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, booking) = await HoldAndConfirmAsync();
             // The reset deletes every booking while this one is waiting for its payment.
             var admin = await _fixture.Api.CreateAdminClientAsync();
-            (await admin.PostAsync("/api/Setup/create-data", null)).EnsureSuccessStatusCode();
+            (await admin.PostAsync("/api/Setup/create-data", null, ct)).EnsureSuccessStatusCode();
 
-            await _harness.Bus.Publish(Succeeded(booking));
+            await _harness.Bus.Publish(Succeeded(booking), ct);
 
             // There is no booking to look anything up in, so the refund carries what the payment message said.
             var refund = await _fixture.Api.WaitForDeliveryAsync<RefundRequested>(e => e.PaymentId == booking.PaymentId);
@@ -169,12 +172,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task SameMessageDeliveredTwice_ShouldConfirmAndAnnounceOnce()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, booking) = await HoldAndConfirmAsync();
             var message = Succeeded(booking);
             var messageId = NewId.NextGuid();
 
-            await _harness.Bus.Publish(message, context => context.MessageId = messageId);
-            await _harness.Bus.Publish(message, context => context.MessageId = messageId);
+            await _harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
+            await _harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
 
             await DeliveredAsync<BookingConfirmed>(booking.Id, e => e.BookingId);
 
@@ -187,11 +191,11 @@ namespace SeatHive.Tests.Integration.Api
             {
                 await using var db = _fixture.CreateContext();
                 var inbox = await db.Set<MassTransit.EntityFrameworkCoreIntegration.InboxState>()
-                    .AsNoTracking().Where(i => i.MessageId == messageId).ToListAsync();
+                    .AsNoTracking().Where(i => i.MessageId == messageId).ToListAsync(cancellationToken: ct);
                 if (inbox.Count == consumers && inbox.All(i => i.ReceiveCount >= 2)) break;
 
                 Assert.True(DateTime.UtcNow < deadline, $"Receive counts: [{string.Join(",", inbox.Select(i => i.ReceiveCount))}], expected {consumers} rows with at least 2 each.");
-                await Task.Delay(20);
+                await Task.Delay(20, ct);
             }
 
             Assert.Equal(1, CountDelivered<BookingConfirmed>(booking.Id, e => e.BookingId));
@@ -202,12 +206,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Release_ShouldReturn409_WhileThePaymentIsInProgress()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, booking) = await HoldAndConfirmAsync();
 
-            var response = await client.PostAsync($"/api/Booking/{booking.Id}/release", null);
+            var response = await client.PostAsync($"/api/Booking/{booking.Id}/release", null, ct);
 
             Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal("payment_in_progress", body.GetProperty("code").GetString());
         }
 
@@ -252,7 +257,7 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal(0, _fixture.Api.CountDelivered<HoldReleased>(e => e.BookingId == rolledBack));
             await using var db = _fixture.CreateContext();
             var stored = await db.Set<MassTransit.EntityFrameworkCoreIntegration.OutboxMessage>()
-                .CountAsync(m => m.Body.Contains(rolledBack.ToString()));
+                .CountAsync(m => m.Body.Contains(rolledBack.ToString()), cancellationToken: TestContext.Current.CancellationToken);
             Assert.Equal(0, stored);
         }
     }

@@ -90,7 +90,7 @@ namespace SeatHive.Tests.Integration
         {
             var handleA = await _clientA.AcquireLockAsync(_key, TimeSpan.FromMilliseconds(200));
             Assert.NotNull(handleA);
-            await Task.Delay(500);
+            await Task.Delay(500, TestContext.Current.CancellationToken);
             var handleB = await _clientB.AcquireLockAsync(_key, TimeSpan.FromSeconds(30));
             Assert.NotNull(handleB);
 
@@ -129,7 +129,7 @@ namespace SeatHive.Tests.Integration
         public async Task Acquire_ShouldSucceedAgain_AfterTtlExpires()
         {
             Assert.NotNull(await _clientA.AcquireLockAsync(_key, TimeSpan.FromMilliseconds(200)));
-            await Task.Delay(500);
+            await Task.Delay(500, TestContext.Current.CancellationToken);
 
             Assert.NotNull(await _clientB.AcquireLockAsync(_key, TimeSpan.FromSeconds(30)));
         }

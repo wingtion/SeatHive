@@ -85,13 +85,14 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Hold_ShouldReturn200_WithBookingIdAndExpiresAt()
         {
+            var ct = TestContext.Current.CancellationToken;
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.True(body.GetProperty("bookingId").GetInt32() > 0);
             Assert.Equal(seatId, body.GetProperty("seatId").GetInt32());
             Assert.Equal("held", body.GetProperty("status").GetString());
@@ -103,14 +104,15 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Hold_ShouldReturnTheSameHold_WhenRepeatedByTheSameUser()
         {
+            var ct = TestContext.Current.CancellationToken;
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
 
-            var first = await (await client.PostAsJsonAsync(HoldUrl, new { seatId })).Content.ReadFromJsonAsync<JsonElement>();
-            var secondResponse = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var first = await (await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: ct)).Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            var secondResponse = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.OK, secondResponse.StatusCode);
-            var second = await secondResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var second = await secondResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal(first.GetProperty("bookingId").GetInt32(), second.GetProperty("bookingId").GetInt32());
             Assert.Equal(first.GetProperty("expiresAt").GetDateTimeOffset(), second.GetProperty("expiresAt").GetDateTimeOffset());
             Assert.Equal(1, await CountBookingsAsync(seatId, "Held"));
@@ -124,7 +126,7 @@ namespace SeatHive.Tests.Integration.Api
             var second = await _fixture.Api.CreateUserClientAsync();
             await HoldAsync(first, seatId);
 
-            var response = await second.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await second.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Conflict, "seat_held");
         }
@@ -138,7 +140,7 @@ namespace SeatHive.Tests.Integration.Api
             var bookingId = await HoldAsync(first, seatId);
             await _fixture.ConfirmThroughPaymentAsync(first, bookingId);
 
-            var response = await second.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await second.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Conflict, "seat_already_booked");
         }
@@ -148,7 +150,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId = int.MaxValue });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId = int.MaxValue }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.NotFound, "seat_not_found");
         }
@@ -164,7 +166,7 @@ namespace SeatHive.Tests.Integration.Api
 
             try
             {
-                var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+                var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
                 await AssertProblemAsync(response, HttpStatusCode.Conflict, "seat_locked");
             }
@@ -187,7 +189,7 @@ namespace SeatHive.Tests.Integration.Api
             }
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, await CountBookingsAsync(seatId, "Held"));
@@ -201,7 +203,7 @@ namespace SeatHive.Tests.Integration.Api
             await InsertExpiredHoldAsync(seatId, formerUserId);
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(1, await CountBookingsAsync(seatId, "Held"));
@@ -219,7 +221,7 @@ namespace SeatHive.Tests.Integration.Api
             }
             var seatId = await _fixture.CreateFreeSeatAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Conflict, "hold_limit_reached");
             Assert.Equal(0, await CountBookingsAsync(seatId, "Held"));
@@ -230,7 +232,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId = 0 });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId = 0 }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.BadRequest, "validation_failed");
         }
@@ -240,7 +242,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = ApiFactory.Authorize(_fixture.Api.CreateClient(), AuthorizationTests.CreateToken(sub: "not-a-number"));
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId = 1 });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId = 1 }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Unauthorized, "invalid_token");
         }
@@ -251,7 +253,7 @@ namespace SeatHive.Tests.Integration.Api
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
 
-            var response = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+            var response = await client.PostAsJsonAsync("/api/Booking", new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.True(
                 response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed,
@@ -262,14 +264,15 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Confirm_ShouldReturn202_AndStartThePayment()
         {
+            var ct = TestContext.Current.CancellationToken;
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(client, seatId);
 
-            var response = await client.PostAsync(ConfirmUrl(bookingId), null);
+            var response = await client.PostAsync(ConfirmUrl(bookingId), null, ct);
 
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal(bookingId, body.GetProperty("bookingId").GetInt32());
             Assert.Equal(seatId, body.GetProperty("seatId").GetInt32());
             Assert.Equal("paymentPending", body.GetProperty("status").GetString());
@@ -277,22 +280,23 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal(0, await CountBookingsAsync(seatId, "Confirmed"));
 
             // Confirming again while the payment is in progress changes nothing.
-            var again = await client.PostAsync(ConfirmUrl(bookingId), null);
+            var again = await client.PostAsync(ConfirmUrl(bookingId), null, ct);
             Assert.Equal(HttpStatusCode.Accepted, again.StatusCode);
         }
 
         [Fact]
         public async Task Confirm_ShouldReturn200_WhenTheOwnerRepeatsItAfterTheBookingIsConfirmed()
         {
+            var ct = TestContext.Current.CancellationToken;
             var client = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(client, seatId);
             await _fixture.ConfirmThroughPaymentAsync(client, bookingId);
 
-            var response = await client.PostAsync(ConfirmUrl(bookingId), null);
+            var response = await client.PostAsync(ConfirmUrl(bookingId), null, ct);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal("confirmed", body.GetProperty("status").GetString());
             Assert.Equal(1, await CountBookingsAsync(seatId, "Confirmed"));
         }
@@ -305,7 +309,7 @@ namespace SeatHive.Tests.Integration.Api
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(owner, seatId);
 
-            var response = await other.PostAsync(ConfirmUrl(bookingId), null);
+            var response = await other.PostAsync(ConfirmUrl(bookingId), null, TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Forbidden, "not_hold_owner");
             Assert.Equal(1, await CountBookingsAsync(seatId, "Held"));
@@ -319,7 +323,7 @@ namespace SeatHive.Tests.Integration.Api
             var bookingId = await HoldAsync(owner, await _fixture.CreateFreeSeatAsync());
             await _fixture.ConfirmThroughPaymentAsync(owner, bookingId);
 
-            var response = await other.PostAsync(ConfirmUrl(bookingId), null);
+            var response = await other.PostAsync(ConfirmUrl(bookingId), null, TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Forbidden, "not_hold_owner");
         }
@@ -331,7 +335,7 @@ namespace SeatHive.Tests.Integration.Api
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await InsertExpiredHoldAsync(seatId, userId);
 
-            var response = await client.PostAsync(ConfirmUrl(bookingId), null);
+            var response = await client.PostAsync(ConfirmUrl(bookingId), null, TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Gone, "hold_expired");
             Assert.Equal(0, await CountBookingsAsync(seatId, "Confirmed"));
@@ -340,11 +344,12 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Confirm_ShouldReturn409_WhenTheHoldWasReleased()
         {
+            var ct = TestContext.Current.CancellationToken;
             var client = await _fixture.Api.CreateUserClientAsync();
             var bookingId = await HoldAsync(client, await _fixture.CreateFreeSeatAsync());
-            (await client.PostAsync(ReleaseUrl(bookingId), null)).EnsureSuccessStatusCode();
+            (await client.PostAsync(ReleaseUrl(bookingId), null, ct)).EnsureSuccessStatusCode();
 
-            var response = await client.PostAsync(ConfirmUrl(bookingId), null);
+            var response = await client.PostAsync(ConfirmUrl(bookingId), null, ct);
 
             await AssertProblemAsync(response, HttpStatusCode.Conflict, "hold_not_active");
         }
@@ -352,24 +357,26 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task ConfirmAndRelease_ShouldReturn404_ForUnknownBooking()
         {
+            var ct = TestContext.Current.CancellationToken;
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            await AssertProblemAsync(await client.PostAsync(ConfirmUrl(int.MaxValue), null), HttpStatusCode.NotFound, "booking_not_found");
-            await AssertProblemAsync(await client.PostAsync(ReleaseUrl(int.MaxValue), null), HttpStatusCode.NotFound, "booking_not_found");
+            await AssertProblemAsync(await client.PostAsync(ConfirmUrl(int.MaxValue), null, ct), HttpStatusCode.NotFound, "booking_not_found");
+            await AssertProblemAsync(await client.PostAsync(ReleaseUrl(int.MaxValue), null, ct), HttpStatusCode.NotFound, "booking_not_found");
         }
 
         [Fact]
         public async Task Release_ShouldReturn200_AndFreeTheSeatForAnotherUser()
         {
+            var ct = TestContext.Current.CancellationToken;
             var owner = await _fixture.Api.CreateUserClientAsync();
             var other = await _fixture.Api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(owner, seatId);
 
-            var response = await owner.PostAsync(ReleaseUrl(bookingId), null);
+            var response = await owner.PostAsync(ReleaseUrl(bookingId), null, ct);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal(bookingId, body.GetProperty("bookingId").GetInt32());
             Assert.Equal("released", body.GetProperty("status").GetString());
             Assert.Equal(1, await CountBookingsAsync(seatId, "Released"));
@@ -385,7 +392,7 @@ namespace SeatHive.Tests.Integration.Api
             var seatId = await _fixture.CreateFreeSeatAsync();
             var bookingId = await HoldAsync(owner, seatId);
 
-            var response = await other.PostAsync(ReleaseUrl(bookingId), null);
+            var response = await other.PostAsync(ReleaseUrl(bookingId), null, TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Forbidden, "not_hold_owner");
             Assert.Equal(1, await CountBookingsAsync(seatId, "Held"));
@@ -399,7 +406,7 @@ namespace SeatHive.Tests.Integration.Api
             var bookingId = await HoldAsync(client, seatId);
             await _fixture.ConfirmThroughPaymentAsync(client, bookingId);
 
-            var response = await client.PostAsync(ReleaseUrl(bookingId), null);
+            var response = await client.PostAsync(ReleaseUrl(bookingId), null, TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Conflict, "hold_not_active");
             Assert.Equal(1, await CountBookingsAsync(seatId, "Confirmed"));
@@ -412,7 +419,7 @@ namespace SeatHive.Tests.Integration.Api
             var admin = await _fixture.Api.CreateAdminClientAsync();
             var before = await HoldAsync(client, await _fixture.CreateFreeSeatAsync());
 
-            (await admin.PostAsync("/api/Setup/create-data", null)).EnsureSuccessStatusCode();
+            (await admin.PostAsync("/api/Setup/create-data", null, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
             var after = await HoldAsync(client, await _fixture.CreateFreeSeatAsync());
 
             // A message about an old booking, still on its way, must never meet a new booking with the same id.
@@ -448,7 +455,7 @@ namespace SeatHive.Tests.Integration.Api
             var email = ApiFactory.UniqueEmail();
             (await ApiFactory.RegisterAsync(client, email, "Passw0rd!")).EnsureSuccessStatusCode();
 
-            var response = await client.PostAsJsonAsync("/api/Auth/login", new { email, password = "WrongPassw0rd!" });
+            var response = await client.PostAsJsonAsync("/api/Auth/login", new { email, password = "WrongPassw0rd!" }, cancellationToken: TestContext.Current.CancellationToken);
 
             await AssertProblemAsync(response, HttpStatusCode.Unauthorized, "invalid_credentials");
         }

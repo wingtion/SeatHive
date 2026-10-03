@@ -70,7 +70,7 @@ namespace SeatHive.Tests.Integration.Api
             var request = new HttpRequestMessage(HttpMethod.Get, "/api/Events");
             request.Headers.Add("Origin", FrontEnd);
 
-            var response = await api.CreateClient().SendAsync(request);
+            var response = await api.CreateClient().SendAsync(request, TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
             Assert.Equal(FrontEnd, Header(response, "Access-Control-Allow-Origin"));
@@ -86,7 +86,7 @@ namespace SeatHive.Tests.Integration.Api
             var preflight = await PreflightAsync(client, "/api/Booking/hold", Stranger, "POST", "authorization,content-type");
             var request = new HttpRequestMessage(HttpMethod.Get, "/api/Events");
             request.Headers.Add("Origin", Stranger);
-            var get = await client.SendAsync(request);
+            var get = await client.SendAsync(request, TestContext.Current.CancellationToken);
 
             foreach (var response in new[] { preflight, get })
             {

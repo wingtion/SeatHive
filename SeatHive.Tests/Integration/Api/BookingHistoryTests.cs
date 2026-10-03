@@ -97,7 +97,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var (client, bookingId, _, _) = await HoldAsync();
 
-            Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).StatusCode);
+            Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, TestContext.Current.CancellationToken)).StatusCode);
 
             // The test clock stands still, so every event happened at the same moment:
             // the order then follows the life cycle of a booking.
@@ -125,16 +125,17 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task FailedPayment_AndTheRetry_ShouldBothBeInTheHistory()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, _, _) = await HoldAsync();
 
-            (await client.PostAsJsonAsync($"/api/Booking/{bookingId}/confirm", new { simulatePaymentFailure = true })).EnsureSuccessStatusCode();
+            (await client.PostAsJsonAsync($"/api/Booking/{bookingId}/confirm", new { simulatePaymentFailure = true }, cancellationToken: ct)).EnsureSuccessStatusCode();
             var failed = await WaitForHistoryAsync(client, bookingId, 3);
             Assert.Equal("forced", failed[2].GetProperty("detail").GetString());
             await _fixture.WaitForBookingStatusAsync(bookingId, BookingStatus.Held, _database);
 
             // Time passes before the owner tries again.
             _api.Clock.Advance(TimeSpan.FromSeconds(2));
-            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct)).EnsureSuccessStatusCode();
 
             var items = await WaitForHistoryAsync(client, bookingId, 7);
             Assert.Equal(
@@ -149,7 +150,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var (client, bookingId, _, _) = await HoldAsync();
 
-            (await client.PostAsync($"/api/Booking/{bookingId}/release", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/release", null, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
             Assert.Equal(new[] { "seatHeld", "holdReleased" }, Types(await WaitForHistoryAsync(client, bookingId, 2)));
         }
@@ -170,6 +171,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Refund_ShouldBeInTheHistory()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             // The owner confirmed, but the payment result did not arrive before the sweeper gave the seat up.
             // The payment was really charged at the provider.
@@ -178,10 +180,10 @@ namespace SeatHive.Tests.Integration.Api
             {
                 await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.Status, BookingStatus.Expired)
-                    .SetProperty(b => b.PaymentId, paymentId));
+                    .SetProperty(b => b.PaymentId, paymentId), cancellationToken: ct);
             }
 
-            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, seatId, userId, Now(), paymentId));
+            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, seatId, userId, Now(), paymentId), ct);
 
             var items = await WaitForHistoryAsync(client, bookingId, 4);
             Assert.Equal(new[] { "seatHeld", "paymentSucceeded", "refundRequested", "refundCompleted" }, Types(items));
@@ -192,6 +194,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task RefundThatCouldNotBeMade_ShouldBeInTheHistory_AsFailed()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             // A payment result for a payment the provider knows nothing about: there is no charge to give back.
             var paymentId = Guid.NewGuid();
@@ -199,10 +202,10 @@ namespace SeatHive.Tests.Integration.Api
             {
                 await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.Status, BookingStatus.Expired)
-                    .SetProperty(b => b.PaymentId, paymentId));
+                    .SetProperty(b => b.PaymentId, paymentId), cancellationToken: ct);
             }
 
-            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, seatId, userId, Now(), paymentId));
+            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, seatId, userId, Now(), paymentId), ct);
 
             // The history says what happened: the refund was asked for and could not be made. It does not say "completed".
             var items = await WaitForHistoryAsync(client, bookingId, 4);
@@ -216,6 +219,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task RolledBackChange_ShouldLeaveNothingInTheHistory()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             await WaitForHistoryAsync(client, bookingId, 1);
 
@@ -225,14 +229,14 @@ namespace SeatHive.Tests.Integration.Api
                 var db = scope.ServiceProvider.GetRequiredService<SeatHive.Api.Data.AppDbContext>();
                 var publisher = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
 
-                await using var transaction = await db.Database.BeginTransactionAsync();
-                await publisher.Publish(new HoldReleased(bookingId, seatId, userId, Now()));
-                await db.SaveChangesAsync();
-                await transaction.RollbackAsync();
+                await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                await publisher.Publish(new HoldReleased(bookingId, seatId, userId, Now()), ct);
+                await db.SaveChangesAsync(ct);
+                await transaction.RollbackAsync(ct);
             }
 
             // ...and one that really happened afterwards. Once that one is recorded, the first would have been too.
-            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct)).EnsureSuccessStatusCode();
             var items = await WaitForHistoryAsync(client, bookingId, 5);
 
             Assert.DoesNotContain("holdReleased", Types(items));
@@ -247,7 +251,7 @@ namespace SeatHive.Tests.Integration.Api
             await WaitForHistoryAsync(client, bookingId, 1);
 
             // Recorded last, but it happened ten minutes before the hold.
-            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, Now().AddMinutes(-10), Guid.NewGuid(), "late-arrival"));
+            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, Now().AddMinutes(-10), Guid.NewGuid(), "late-arrival"), TestContext.Current.CancellationToken);
 
             var items = await WaitForHistoryAsync(client, bookingId, 2);
             Assert.Equal(new[] { "paymentFailed", "seatHeld" }, Types(items));
@@ -257,12 +261,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task EventsOfTheSameKindAtTheSameMoment_ShouldBeOrderedBySequence()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             var moment = Now().AddMinutes(1);
 
-            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, moment, Guid.NewGuid(), "first"));
+            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, moment, Guid.NewGuid(), "first"), ct);
             await WaitForHistoryAsync(client, bookingId, 2);
-            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, moment, Guid.NewGuid(), "second"));
+            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, moment, Guid.NewGuid(), "second"), ct);
 
             var items = await WaitForHistoryAsync(client, bookingId, 3);
             Assert.Equal(new[] { "first", "second" }, items.Skip(1).Select(i => i.GetProperty("detail").GetString()));
@@ -272,12 +277,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task History_ShouldBePaged()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, _, _) = await HoldAsync();
-            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct)).EnsureSuccessStatusCode();
             await WaitForHistoryAsync(client, bookingId, 5);
 
-            var second = await (await client.GetAsync($"{HistoryUrl(bookingId)}?page=2&pageSize=2")).Content.ReadFromJsonAsync<JsonElement>();
-            var tooLarge = await client.GetAsync($"{HistoryUrl(bookingId)}?pageSize=101");
+            var second = await (await client.GetAsync($"{HistoryUrl(bookingId)}?page=2&pageSize=2", ct)).Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
+            var tooLarge = await client.GetAsync($"{HistoryUrl(bookingId)}?pageSize=101", ct);
 
             Assert.Equal(new[] { "paymentSucceeded", "bookingConfirmed" }, Types(second.GetProperty("items").EnumerateArray()));
             Assert.Equal(5, second.GetProperty("totalCount").GetInt32());
@@ -289,16 +295,17 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task SameEventDeliveredTwice_ShouldBeRecordedOnce()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             var message = new HoldReleased(bookingId, seatId, userId, Now());
             var messageId = NewId.NextGuid();
 
-            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId);
-            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId);
+            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
+            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
             await WaitForHistoryAsync(client, bookingId, 2);
 
             // A later event of the booking: once it is recorded, the second delivery has been dealt with as well.
-            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, Now().AddMinutes(1), Guid.NewGuid(), "marker"));
+            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, Now().AddMinutes(1), Guid.NewGuid(), "marker"), ct);
             await WaitForHistoryAsync(client, bookingId, 3);
 
             Assert.Equal(1, await CountByEventIdAsync(messageId));
@@ -307,22 +314,23 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task SameEventDeliveredAgain_AfterTheInboxForgotIt_ShouldStillBeRecordedOnce()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             var message = new HoldReleased(bookingId, seatId, userId, Now());
             var messageId = NewId.NextGuid();
-            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId);
+            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
             await WaitForHistoryAsync(client, bookingId, 2);
 
             // The inbox only remembers a message for a while. After that, the unique event id is what is left.
             await using (var db = _fixture.CreateContext(_database))
             {
                 var forgotten = await db.Set<MassTransit.EntityFrameworkCoreIntegration.InboxState>()
-                    .Where(i => i.MessageId == messageId).ExecuteDeleteAsync();
+                    .Where(i => i.MessageId == messageId).ExecuteDeleteAsync(cancellationToken: ct);
                 Assert.Equal(1, forgotten);
             }
 
-            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId);
-            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, Now().AddMinutes(1), Guid.NewGuid(), "marker"));
+            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
+            await _api.Harness.Bus.Publish(new PaymentFailed(bookingId, seatId, userId, Now().AddMinutes(1), Guid.NewGuid(), "marker"), ct);
             await WaitForHistoryAsync(client, bookingId, 3);
 
             Assert.Equal(1, await CountByEventIdAsync(messageId));
@@ -346,6 +354,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task HistoryRow_ShouldBeWrittenInTheSameTransactionAsTheInboxRecord()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, seatId, userId) = await HoldAsync();
             await WaitForHistoryAsync(client, bookingId, 1);
             var messageId = NewId.NextGuid();
@@ -363,23 +372,23 @@ namespace SeatHive.Tests.Integration.Api
                 """);
             try
             {
-                await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId);
+                await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
 
                 // The fault is announced after the last retry, more than a second and a half later. It is polled for
                 // with a deadline of its own: the harness gives up waiting as soon as the bus is quiet for a moment,
                 // and the pause before the last retry is long enough for that.
                 var deadline = DateTime.UtcNow.AddSeconds(15);
-                while (!_api.Harness.Published.Select<Fault<HoldReleased>>(f => f.Context.Message.Message.BookingId == bookingId).Any())
+                while (!_api.Harness.Published.Select<Fault<HoldReleased>>(f => f.Context.Message.Message.BookingId == bookingId, ct).Any())
                 {
                     Assert.True(DateTime.UtcNow < deadline, "The consumer was expected to fail.");
-                    await Task.Delay(50);
+                    await Task.Delay(50, ct);
                 }
 
                 // The row went with the transaction: nothing of the event is left.
                 Assert.Equal(0, await CountByEventIdAsync(messageId));
                 await using var db = _fixture.CreateContext(_database);
                 Assert.Equal(0, await db.Set<MassTransit.EntityFrameworkCoreIntegration.InboxState>()
-                    .CountAsync(i => i.MessageId == messageId && i.Consumed != null));
+                    .CountAsync(i => i.MessageId == messageId && i.Consumed != null, cancellationToken: ct));
             }
             finally
             {
@@ -387,7 +396,7 @@ namespace SeatHive.Tests.Integration.Api
             }
 
             // Delivered again when the database works: recorded, once.
-            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId);
+            await _api.Harness.Bus.Publish(message, context => context.MessageId = messageId, cancellationToken: ct);
             await WaitForHistoryAsync(client, bookingId, 2);
             Assert.Equal(1, await CountByEventIdAsync(messageId));
         }
@@ -397,19 +406,20 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task History_ShouldReturn403_ForAnotherUser_AndForAdmin()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (owner, bookingId, _, _) = await HoldAsync();
             var other = await _api.CreateUserClientAsync();
             var admin = await _api.CreateAdminClientAsync();
 
-            Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(HistoryUrl(bookingId))).StatusCode);
-            await ProblemAssert.HasCodeAsync(await other.GetAsync(HistoryUrl(bookingId)), HttpStatusCode.Forbidden, "not_hold_owner");
-            await ProblemAssert.HasCodeAsync(await admin.GetAsync(HistoryUrl(bookingId)), HttpStatusCode.Forbidden, "not_hold_owner");
+            Assert.Equal(HttpStatusCode.OK, (await owner.GetAsync(HistoryUrl(bookingId), ct)).StatusCode);
+            await ProblemAssert.HasCodeAsync(await other.GetAsync(HistoryUrl(bookingId), ct), HttpStatusCode.Forbidden, "not_hold_owner");
+            await ProblemAssert.HasCodeAsync(await admin.GetAsync(HistoryUrl(bookingId), ct), HttpStatusCode.Forbidden, "not_hold_owner");
         }
 
         [Fact]
         public async Task History_ShouldReturn401_WithoutAToken()
         {
-            var response = await _api.CreateClient().GetAsync(HistoryUrl(1));
+            var response = await _api.CreateClient().GetAsync(HistoryUrl(1), TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.Unauthorized, "unauthorized");
         }
@@ -419,7 +429,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _api.CreateUserClientAsync();
 
-            var response = await client.GetAsync(HistoryUrl(int.MaxValue));
+            var response = await client.GetAsync(HistoryUrl(int.MaxValue), TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.NotFound, "booking_not_found");
         }
@@ -429,14 +439,15 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Reset_ShouldDeleteTheHistory_AndAnnounceItself()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId, _, _) = await HoldAsync();
             await WaitForHistoryAsync(client, bookingId, 1);
             var admin = await _api.CreateAdminClientAsync();
 
-            (await admin.PostAsync("/api/Setup/create-data", null)).EnsureSuccessStatusCode();
+            (await admin.PostAsync("/api/Setup/create-data", null, ct)).EnsureSuccessStatusCode();
 
             Assert.Equal(0, await CountByBookingIdAsync(bookingId));
-            await ProblemAssert.HasCodeAsync(await client.GetAsync(HistoryUrl(bookingId)), HttpStatusCode.NotFound, "booking_not_found");
+            await ProblemAssert.HasCodeAsync(await client.GetAsync(HistoryUrl(bookingId), ct), HttpStatusCode.NotFound, "booking_not_found");
             // The reset goes through the outbox like every other change, so subscribers hear about it after the commit.
             await _api.WaitForDeliveryAsync<DemoDataReset>(_ => true);
         }

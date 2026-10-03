@@ -46,7 +46,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var (client, bookingId) = await HoldAsync();
 
-            var response = await client.PostAsync($"/api/Booking/{bookingId}/confirm", null);
+            var response = await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             var booking = await _fixture.WaitForBookingStatusAsync(bookingId, BookingStatus.Confirmed, _database);
@@ -68,6 +68,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task ProviderCall_ShouldRunWithoutAnOpenDatabaseTransaction()
         {
+            var ct = TestContext.Current.CancellationToken;
             // A host like the one of this class, but the payment takes a second on the test clock, which does not
             // move by itself. It gets a database of its own: the class's host is running, and in a database
             // that only this host uses every open transaction is one of its own.
@@ -77,11 +78,11 @@ namespace SeatHive.Tests.Integration.Api
             var (client, bookingId) = await HoldAsync(api, database);
 
             var waiting = api.Clock.NextWaitAsync();
-            var response = await client.PostAsync($"/api/Booking/{bookingId}/confirm", null);
+            var response = await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct);
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
 
             // The payment is now "at the provider". Nothing in this database, API or Worker, holds a transaction for it.
-            await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+            await waiting.WaitAsync(TimeSpan.FromSeconds(10), ct);
             int openTransactions;
             try
             {
@@ -102,9 +103,10 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task FailedPayment_ShouldLeaveTheHold_AndConfirmNothing()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (client, bookingId) = await HoldAsync();
 
-            var response = await client.PostAsJsonAsync($"/api/Booking/{bookingId}/confirm", new { simulatePaymentFailure = true });
+            var response = await client.PostAsJsonAsync($"/api/Booking/{bookingId}/confirm", new { simulatePaymentFailure = true }, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.Accepted, response.StatusCode);
             await _api.WaitForDeliveryAsync<PaymentFailed>(e => e.BookingId == bookingId);
@@ -113,7 +115,7 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal(0, _api.CountDelivered<NotificationSent>(e => e.BookingId == bookingId));
 
             // The owner tries again, this time without the forced failure.
-            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct)).EnsureSuccessStatusCode();
             await _fixture.WaitForBookingStatusAsync(bookingId, BookingStatus.Confirmed, _database);
             await _api.WaitForDeliveryAsync<NotificationSent>(e => e.BookingId == bookingId);
         }
@@ -121,6 +123,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task PaymentThatSucceedsAfterTheBookingExpired_ShouldBeRefunded()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, bookingId) = await HoldAsync();
             // The owner confirmed, but the payment result did not arrive before the sweeper gave the seat up.
             // The payment was really charged at the provider.
@@ -129,11 +132,11 @@ namespace SeatHive.Tests.Integration.Api
             {
                 await db.Bookings.Where(b => b.Id == bookingId).ExecuteUpdateAsync(s => s
                     .SetProperty(b => b.Status, BookingStatus.Expired)
-                    .SetProperty(b => b.PaymentId, paymentId));
+                    .SetProperty(b => b.PaymentId, paymentId), cancellationToken: ct);
             }
             var booking = await _fixture.ReadBookingAsync(bookingId, _database);
 
-            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, booking.SeatId, booking.UserId, DateTime.UtcNow, paymentId));
+            await _api.Harness.Bus.Publish(new PaymentSucceeded(bookingId, booking.SeatId, booking.UserId, DateTime.UtcNow, paymentId), ct);
 
             var requested = await _api.WaitForDeliveryAsync<RefundRequested>(e => e.BookingId == bookingId);
             var completed = await _api.WaitForDeliveryAsync<RefundCompleted>(e => e.BookingId == bookingId);

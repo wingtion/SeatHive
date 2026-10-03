@@ -221,6 +221,8 @@ dotnet test --filter "Category=E2E"           # the API and the Worker's consume
 
 There are no unit tests: every test needs Docker.
 
+The tests run on xUnit v3 through VSTest, and the package is `xunit.v3.mtp-off` on purpose: plain `xunit.v3` 4.x brings in Microsoft Testing Platform, which makes `dotnet test` fail in VSTest mode on the .NET 10 SDK.
+
 *   **Booking service (Testcontainers):** the service on a real database, partly with a mocked lock and message bus: for example that a lock which was not acquired is never released, and that each step (hold, payment request, confirmation) publishes its event once.
 *   **Hold flow (Testcontainers):** the same user holding a seat twice gets the same hold; another user can take a seat once its hold has run out, without the sweeper; confirming or releasing someone else's hold is rejected; an expired hold cannot be confirmed; the per-user limit; the sweep expires only holds that ran out. Time comes from a fake clock that the tests advance, so nothing waits for time to pass. The hold sweeper's timer loop itself is not tested, only the expiry it calls.
 *   **Payment flow (Testcontainers):** a successful payment confirms the booking; a failed one returns it to a hold that can be paid again; a result for an earlier attempt does not touch the current one; a payment that succeeds after the booking expired, was released or was deleted is refunded; a result inside the grace period still confirms.
