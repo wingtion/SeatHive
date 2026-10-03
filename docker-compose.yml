@@ -1,6 +1,6 @@
-version: '3.8'
-
 # Secrets come from a .env file next to this file (copy .env.example to .env).
+# Images are pinned to a release line that only gets fixes: Postgres by major version (its minor releases are
+# fixes only), the others by minor version. The tests start the same Postgres and Redis images (ComposeImages).
 # Infrastructure ports are not published here; docker-compose.override.yml publishes them for local development.
 # On a server run: docker compose -f docker-compose.yml up -d --build
 
@@ -72,7 +72,7 @@ services:
 
   # 4. Redis Cache
   redis:
-    image: redis:alpine
+    image: redis:8.10-alpine
     container_name: seathive_redis
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
     environment:
@@ -86,7 +86,7 @@ services:
 
   # 5. RabbitMQ Queue
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:4.3-management-alpine
     container_name: seathive_rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}

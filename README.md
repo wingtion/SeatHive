@@ -113,9 +113,9 @@ The API also consumes the booking events itself, on three queues of its own: `bo
 ## Tech Stack
 
 *   **.NET 10 Web API**
-*   **PostgreSQL** (EF Core migrations)
-*   **Redis** (StackExchange.Redis)
-*   **RabbitMQ** (MassTransit)
+*   **PostgreSQL 16** (EF Core migrations)
+*   **Redis 8.10** (StackExchange.Redis)
+*   **RabbitMQ 4.3** (MassTransit)
 *   **xUnit, Moq & Testcontainers**
 *   **Docker & Docker Compose**
 
@@ -194,7 +194,7 @@ Nothing is deployed yet. What a deployment behind a reverse proxy (Caddy) has to
 dotnet test
 ```
 
-The tests need a running Docker daemon, because the integration tests start a real PostgreSQL and a real Redis with Testcontainers. RabbitMQ is replaced by MassTransit's in-memory transport; the outbox and inbox run on the real database.
+The tests need a running Docker daemon, because the integration tests start a real PostgreSQL and a real Redis with Testcontainers. They take both images from `docker-compose.yml`, so they test the versions a server runs. RabbitMQ is replaced by MassTransit's in-memory transport; the outbox and inbox run on the real database. RabbitMQ itself (4.3) is only checked by hand against the running containers.
 
 The two containers are started once per run. The test classes are grouped into collections that run in parallel, each on a database of its own on that one PostgreSQL server (and a Redis database of its own). Most API tests get their user written straight to the database with a token signed by the test key; registering and logging in for real is kept for the registration, access and end to end tests.
 

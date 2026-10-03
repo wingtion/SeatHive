@@ -21,12 +21,13 @@ namespace SeatHive.Tests.Integration
     // They are not stopped here: Testcontainers removes them when the test process ends.
     public static class SharedContainers
     {
+        // The same images as docker-compose.yml (see ComposeImages).
         // Test collections run in parallel and each keeps its own connections, so the server allows more than its default 100.
-        private static readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:16-alpine")
+        private static readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder(ComposeImages.Of("postgres"))
             .WithCommand("-c", "max_connections=400")
             .Build();
 
-        private static readonly RedisContainer Redis = new RedisBuilder("redis:alpine").Build();
+        private static readonly RedisContainer Redis = new RedisBuilder(ComposeImages.Of("redis")).Build();
 
         private static readonly Lazy<Task> Started = new(() => Task.WhenAll(Postgres.StartAsync(), Redis.StartAsync()));
 

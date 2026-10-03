@@ -133,6 +133,12 @@ Compose altyapısıyla API'yi yerelde çalıştırmak bağlanamaz.
 - **D8. Kullanıcı sayımı:** register "User already exists." dönüyor (`AuthService.cs:26`). Demo için kabul edilebilir.
 - **D9. Loglarda string interpolasyonu:** `Worker/Consumers/BookingConsumer.cs:19, 24`; yapılandırılmış log şablonu kullanılmalı.
 - **D10. İmaj ve paket yaşı:** `redis:alpine` etiketsiz, `rabbitmq:3-management` (3.x topluluk desteği bitti), compose `version:` anahtarı artık geçersiz; `Swashbuckle 6.6.2`, `xunit 2.5.3`, `Microsoft.NET.Test.Sdk 17.8.0`, `coverlet 6.0.0` eski; EF paketleri karışık (`8.0.11` ve `8.0.24`).
+  Kapandı (dağıtım hazırlığı):
+  - **Paketler:** net10 geçişinde ve sonrasında güncellendi: Swashbuckle 10.2.3, xunit 2.9.3, Microsoft.NET.Test.Sdk 18.10.1, coverlet 10.1.0, EF Core 10.0.12 (tek sürüm), StackExchange.Redis 3.3.1. `xunit.runner.visualstudio` 4.x ertelemesi "Ertelenen yükseltmeler"de.
+  - **İmajlar:** düzeltme alan sürüm serisine sabitlendi. Postgres `16-alpine` (16.15), major'a sabit; minor sürümleri yalnızca düzeltme içeriyor, major yükseltme ise volume'u taşımayı gerektiriyor. Redis `8.10-alpine` (8.10.2), RabbitMQ `4.3-management-alpine` (4.3.6), Caddy `2.11-alpine` (2.11.6).
+  - **Tek kaynak:** compose `version:` anahtarı kaldırıldı. Testler Postgres ve Redis imajını `docker-compose.yml`'den okuyor (`ComposeImages`), böylece sunucuyla aynı sürümü sınıyorlar.
+  - **RabbitMQ 3.13 → 4.3:** 4.3, geçici ve paylaşımlı kuyrukları (`transient_nonexcl_queues`) varsayılan olarak reddediyor. MassTransit 8.5.11'in tanımladığı bütün kuyruklar kalıcı ve `rabbitmq-diagnostics check_if_any_deprecated_features_are_used` "kullanılan yok" dedi. Docker smoke testinde ödeme zinciri (hold → onay → ödeme → bildirim, beş olaylık geçmiş) ve yarış RabbitMQ 4.3 üzerinden çalıştı; API ve Worker loglarında `fail`/`crit` yok.
+  - **Bilinen uyarı (bilinçli):** RabbitMQ açılışta `management_metrics_collection` için bir eskimiş özellik uyarısı yazıyor; kaynağı RabbitMQ 4.x management eklentisinin istatistik toplama özelliği, yönetim arayüzü geliştirmede tam kullanılsın diye bilinçli olarak açık bırakıldı, imaj 4.3'e sabit.
 
 ## 3. Test durumu ve eksik kritik testler
 
@@ -216,7 +222,7 @@ Sıra:
 
 - **StackExchange.Redis 3.x:** yapıldı, 3.3.1'e yükseltildi.
   - Kod değişikliği gerekmedi: 3.0 IO çekirdeğini yeniden yazdı ama API'yi korudu; 3.1'in derleme hatasına çevirdiği eskimiş API'leri kullanmıyorduk; `-warnaserror` build'i temiz. `Pipelines.Sockets.Unofficial` bağımlılığı kalktı.
-  - 3.x'in varsayılan protokolü RESP3 ve bu kabul edildi: testlerde ve compose'da `redis:alpine` Redis 8.10.2, kullandığımız komutların (SET NX PX, EVAL, EXISTS) sonucu iki protokolde aynı.
+  - 3.x'in varsayılan protokolü RESP3 ve bu kabul edildi: testlerde ve compose'da Redis 8.10.2 (o zaman `redis:alpine`, şimdi `redis:8.10-alpine`), kullandığımız komutların (SET NX PX, EVAL, EXISTS) sonucu iki protokolde aynı.
   - Doğrulama: kilit, eşzamanlılık, Redis'siz çalışma ve simülasyon testleri 5 kez tekrarlandı; tam suite yeşil. Docker smoke testinde iki script de aynı sonucu verdi: yarışta 1 kazanan ve 19 `seat_locked/busy`; Redis durdurulunca kilitsiz hold, başlatılınca kilidin geri gelmesi; `fail`/`crit` log satırı yok.
 - **Swashbuckle 10.x:** yapıldı (adım 5d, alt adım A): 10.2.3'e yükseltildi, Swagger kurulumu Microsoft.OpenApi 2'ye göre yeniden yazıldı. D6 da kapandı: güvenlik şeması `http`/`bearer`, ve yalnızca token isteyen endpoint'lere uygulanıyor (`AuthorizeOperationFilter`). `SwaggerTests` bunu ve Swagger'ın yalnızca Development'ta açık olduğunu doğruluyor.
 - **xunit.runner.visualstudio 4.x:** xunit v3'e geçiş değerlendirilirken, test altyapısı işleriyle birlikte.
