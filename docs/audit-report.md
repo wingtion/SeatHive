@@ -102,6 +102,7 @@ Rezervasyon bir koltuk satırındaki bayrak; `Seat.UserId` için FK yok; hold/ö
 
 **O6. Compose `ASPNETCORE_ENVIRONMENT=Development` ile çalışıyor** — `docker-compose.yml:14`, `Program.cs:95-99`
 Swagger yalnızca bu yüzden açılıyor; canlıda geliştirici hata sayfası ayrıntı sızdırır.
+Adım 5d'de kapandı (alt adım E): `docker-compose.yml` artık `ASPNETCORE_ENVIRONMENT=Production`, yerelde otomatik okunan `docker-compose.override.yml` ise `Development`. Sunucuda yalnızca ana dosyayla kurulumda Swagger kapalı ve Development ayarları (localhost CORS origin'i) yüklenmiyor; docker smoke testinde `swagger.json` Production'da 404, Development'ta 200 döndü.
 
 **O7. MassTransit sürümleri uyumsuz** — `SeatHive.Api.csproj:13` (8.5.8), `SeatHive.Worker.csproj:12` (8.1.1)
 Aynı mesaj sözleşmesini paylaşan iki servis aynı sürümde olmalı. Not: MassTransit 9 ticari lisansa geçti; 8.x'te kalmak bilinçli bir karar olmalı.
@@ -119,7 +120,7 @@ Compose altyapısıyla API'yi yerelde çalıştırmak bağlanamaz.
 - **D3. `LoginRequest`** controller dosyasında tanımlı ve register için de kullanılıyor (`AuthController.cs:33`).
 - **D4. Controller içinde senkron veri erişimi:** `SetupController.cs:21-48` (`SaveChanges`, `EnsureCreated`).
 - **D5. Servisler somut sınıf olarak enjekte ediliyor** (`Program.cs:74, 76`); konfigürasyon `IConfiguration["Jwt:Key"]!` ile dağınık okunuyor (`Program.cs:87-89`, `AuthService.cs:59, 70-71`). Options pattern yeterli; her servise arayüz eklemek gereksiz karmaşıklık olur.
-- **D6. Swagger güvenlik şeması `ApiKey`** (`Program.cs:54`); `Http` + `bearer` olursa "Bearer " yazmak gerekmez.
+- **D6. Swagger güvenlik şeması `ApiKey`** (`Program.cs:54`); `Http` + `bearer` olursa "Bearer " yazmak gerekmez. Adım 5d'de kapandı (alt adım A): şema `http`/`bearer`, yalnızca token isteyen endpoint'lerde; bkz. "Ertelenen yükseltmeler".
 - **D7. `UseHttpsRedirection`** (`Program.cs:101`) konteynerde HTTPS portu olmadan etkisiz; ters vekil arkasında forwarded headers gerekir. Adım 5d'de eklendi: `ReverseProxy:TrustedProxies` ile yalnızca yapılandırılmış proxy'lerden gelen `X-Forwarded-For`/`X-Forwarded-Proto` kabul ediliyor (`ForwardLimit = 1`); `ForwardedHeadersTests` doğruluyor. Ters vekilin kendisi (Caddy) dağıtım adımında.
 - **D8. Kullanıcı sayımı:** register "User already exists." dönüyor (`AuthService.cs:26`). Demo için kabul edilebilir.
 - **D9. Loglarda string interpolasyonu:** `Worker/Consumers/BookingConsumer.cs:19, 24`; yapılandırılmış log şablonu kullanılmalı.

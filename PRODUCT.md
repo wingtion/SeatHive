@@ -57,15 +57,12 @@ Implemented today:
 - Read endpoints: `GET /api/events`, `GET /api/events/{id}` and `GET /api/events/{id}/seats` need no token; `GET /api/booking` and `GET /api/booking/{id}` return the caller's own bookings only (another user's booking is `403` `not_hold_owner`, for admins too). Lists are paged with `page` and `pageSize` and answer `{ items, page, pageSize, totalCount }`. A seat is `{ seatId, section, row, seatNumber, status, heldUntil }` with status `available`, `held` or `booked`; it never says who holds the seat. In JSON every status is a camelCase string (`held`, `paymentPending`, `confirmed`, `expired`, `released`). Further error codes: `event_not_found` (404), `unauthorized` (401), `forbidden` (403), `rate_limited` (429).
 - Booking history: `GET /api/booking/{id}/history` (owner only, paged) lists the events that really happened to a booking, each as `{ eventId, sequence, type, occurredAt, paymentId, detail, simulated }`. The types are the event names in camelCase (`seatHeld`, `paymentRequested`, `paymentSucceeded`, `paymentFailed`, `bookingConfirmed`, `notificationSent`, `holdReleased`, `holdExpired`, `refundRequested`, `refundCompleted`, `refundFailed`). Rows are written from the events on the bus, one per event, ordered by the time the event carries; payments, refunds and notifications have `simulated: true`. It follows the change by about a second. A reset of the demo data deletes it.
 - Live updates: a SignalR hub at `/hubs/seats` (token required; the client sends it as `access_token`). `JoinEvent(eventId)` / `LeaveEvent(eventId)` choose which event to watch; `JoinEvent` answers `{ joined, error }` (`joined: false`, `error: "event_not_found"` for an unknown event). It sends `seatStatusChanged` `{ eventId, seatId, status, heldUntil }` to everyone watching that event, `bookingEvent` `{ eventId, bookingId, seatId, type, occurredAt, paymentId, detail, simulated }` to the owner of a booking only, and `demoDataReset` to everyone. Every message comes from an event that went through the outbox and the bus, so it follows the change by about a second, and a `bookingEvent` can arrive twice (same `eventId`). A hold that runs out is announced when the sweeper marks it, up to 5 seconds late; `heldUntil` lets the client count down itself.
+- CORS: a browser may call the API and connect to the hub only from the configured origins (exact origins, never `*`, credentials allowed, `GET` and `POST`). On a server that is the Netlify production origin, set as `CORS_ALLOWED_ORIGIN`; locally (Development) it is the Vite dev server, `http://localhost:5173`. The WebSocket handshake is checked against the same list.
 - Data model: Event (name, date), Seat (section, row, seat number; no booked flag), Booking (seat, user, status `Held`/`PaymentPending`/`Confirmed`/`Expired`/`Released`, payment attempt id, created/expires/confirmed timestamps), User (email, password hash, role). A seat is taken while it has a `Held`, `PaymentPending` or `Confirmed` booking; a partial unique index allows at most one of those per seat.
-
-Planned backend work the interface depends on (confirmed direction, not yet built):
-
-- CORS for the Netlify origin.
 
 Constraints:
 
-- The interface shows only real system state. Until the planned backend work exists, the matching UI is not faked with client-side telemetry.
+- The interface shows only real system state. Nothing is faked with client-side telemetry.
 - Payment is simulated; no real payment provider.
 
 Undecided:

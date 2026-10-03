@@ -66,6 +66,7 @@ Two services and a shared contract library:
     *   One API instance is assumed. With several, each event would reach only one of them (they would share the queue), and clients connected to the others would miss it; that needs a SignalR backplane (Redis) first.
 *   **Rate Limiting:** Register and login are limited to 10 requests per minute per IP address, the booking endpoints (hold, confirm and release together) to 30 requests per minute per user, and the read endpoints to 120 requests per minute per user (per IP address without a token), counted separately so reading never uses up the booking limit. Requests over the limit get `429`.
 *   **Behind a Reverse Proxy:** The limits per IP address need the client's address. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only when the request comes from a configured proxy (`ReverseProxy:TrustedProxies`, addresses or networks), and only the last hop counts. With nothing configured they are ignored. Docker Compose gives its network a fixed subnet and trusts that subnet.
+*   **Browser Access (CORS):** A page on another origin (the front end) can call the API and connect to the hub only from an origin listed in `Cors:AllowedOrigins`. Each entry is an exact origin such as `https://seathive.example`; `*`, a path or a trailing `/` stops the API from starting. Credentials are allowed, with the methods `GET` and `POST` and the headers `Authorization`, `Content-Type`, `X-Requested-With` and `X-SignalR-User-Agent`. CORS does not cover the WebSocket handshake, so the same list is checked there too: a handshake from another origin gets `403`. With no origin configured CORS is off.
 *   **Configuration:** Secrets (JWT key, database, Redis and RabbitMQ credentials) are not in the repository. The API and the Worker do not start if one is missing.
 *   **Containerization:** **Docker Compose** runs the API, Worker, Postgres, Redis and RabbitMQ. The API and the Worker each apply their own database migrations when they start.
 
@@ -132,13 +133,13 @@ The API also consumes the booking events itself, on three queues of its own: `bo
     ```bash
     docker compose up -d --build
     ```
-    This also publishes the Postgres, Redis and RabbitMQ ports on `127.0.0.1` for local development (`docker-compose.override.yml`). On a server, keep those ports closed by using only the main file:
+    This runs the API in the Development environment and publishes the Postgres, Redis and RabbitMQ ports on `127.0.0.1` for local development (`docker-compose.override.yml`); a front end on `http://localhost:5173` may call the API. On a server, use only the main file: it keeps those ports closed and runs the API in the Production environment. Set `CORS_ALLOWED_ORIGIN` in `.env` to the front end's origin there.
     ```bash
     docker compose -f docker-compose.yml up -d --build
     ```
 
 4.  **Access Swagger:**
-    Navigate to `http://localhost:8080/swagger` (Swagger is only enabled in the Development environment, which the compose file uses).
+    Navigate to `http://localhost:8080/swagger`. Swagger is only enabled in the Development environment, so it is there with `docker compose up` on your machine and not on a server started with the main file only.
 
 ## Using the API
 
@@ -158,6 +159,7 @@ Settings:
 *   API, section `Holds`: `DurationSeconds` (300), `MaxActivePerUser` (4), `PaymentGraceSeconds` (30) and `SweepIntervalSeconds` (5).
 *   API, section `RateLimiting`: `Auth:PermitLimit` (10), `Booking:PermitLimit` (30) and `Read:PermitLimit` (120), each per minute.
 *   API, `ReverseProxy:TrustedProxies`: a list of addresses or networks; empty by default. Docker Compose sets it to the subnet of its network (`COMPOSE_SUBNET` in `.env`, `172.28.0.0/24` by default).
+*   API, `Cors:AllowedOrigins`: a list of origins; empty by default, which turns CORS off. In the Development environment it is `http://localhost:5173` (`appsettings.Development.json`, and `docker-compose.override.yml` for compose). On a server Docker Compose sets it from `CORS_ALLOWED_ORIGIN` in `.env`.
 *   Worker, section `Payment`: `FailureRate` (0.2), `MinDelayMs` (1000), `MaxDelayMs` (3000), `ChargeRetentionDays` (7) and `CleanupIntervalMinutes` (60).
 
 ## Deployment Notes
@@ -166,6 +168,8 @@ Nothing is deployed yet. What a deployment behind a reverse proxy (Caddy) has to
 
 *   **Mask the token in access logs.** A WebSocket connection to the hub carries the JWT in the address (`/hubs/seats?access_token=...`). A reverse proxy that logs request addresses writes those tokens into its log, where they stay valid for up to 2 hours. Configure the proxy's log to drop or replace the `access_token` query parameter before the hub is reachable from outside.
 *   **Put the proxy in the compose network and do not publish the API's port.** The API believes `X-Forwarded-For` from the compose subnet only. The whole subnet is trusted, so every container in it could send that header; give the proxy a fixed address and narrow `ReverseProxy:TrustedProxies` to it.
+*   **Name the front end's origin.** Set `CORS_ALLOWED_ORIGIN` to the production origin of the front end only (`https://...`, no trailing `/`), not to preview deployments. Without it browsers on other origins cannot call the API.
+*   **Start the main compose file only.** It runs the API in the Production environment: no Swagger and no Development settings (such as the `localhost` origin).
 *   **One API instance.** See Live Updates above for why more need a backplane.
 
 ## Concurrency Simulation
@@ -204,9 +208,10 @@ There are no unit tests: every test needs Docker.
 *   **Concurrency (Testcontainers):** 20 concurrent users holding the same seat, repeated for 25 rounds, must produce exactly one hold each round. One user holding 10 seats at once must end up with exactly 4. A confirm racing the sweeper, and a payment result racing the sweeper, must each end in one outcome, never mixed. Further tests check that a lock can only be released by its owner, and that the database rejects a second active booking for the same seat even with the lock disabled.
 *   **Authorization and API (WebApplicationFactory):** the real API runs in-process and is checked for role access (401/403), status codes and error codes, validation (400), duplicate emails, rate limiting (429), startup configuration, and that a reset of the demo data does not reuse booking ids.
 *   **Read endpoints (WebApplicationFactory):** events and seats are readable without a token; a seat follows its booking (`available`, `held`, `booked`, also for a hold that ran out and was not swept yet); the seat response has exactly its six fields and nothing about the holder; paging limits are rejected with `400`; a booking is `403` for another user and for an admin; reads have their own rate limit.
-*   **Live updates (API and Worker consumers on one in-memory bus, a SignalR client over long polling):** connecting without a token or with an expired one is rejected; a token in the query string is accepted by the hub and nowhere else; joining an event that does not exist is rejected; a watcher of an event sees a seat become held, available and booked, and available again when the hold runs out; the seat message has exactly its four fields; watchers of another event, of nothing, or who left get nothing; a rolled back change is not announced; the owner gets every event of the booking on all connections and another user gets none; a reset reaches every connection. The WebSocket transport itself and closing a connection when its token runs out are not covered by a test.
+*   **Live updates (API and Worker consumers on one in-memory bus, a SignalR client over long polling):** connecting without a token or with an expired one is rejected; a token in the query string is accepted by the hub and nowhere else; joining an event that does not exist is answered with `event_not_found`; a watcher of an event sees a seat become held, available and booked, and available again when the hold runs out; the seat message has exactly its four fields; watchers of another event, of nothing, or who left get nothing; a rolled back change is not announced; the owner gets every event of the booking on all connections and another user gets none; a reset reaches every connection. The WebSocket transport itself and closing a connection when its token runs out are not covered by a test.
 *   **Booking history (API and Worker consumers on one in-memory bus):** a successful booking, a failed payment with a retry, a release, an expiry and a refund each leave their events in order; an event that happened earlier but arrived later is listed earlier; the same event delivered twice, or again after the inbox forgot it, is one row; when marking the message as consumed fails, the row is rolled back with it; a rolled back change leaves no row; another user and an admin get `403`.
 *   **Forwarded headers:** behind a trusted proxy each client address gets its own limit; a forwarded address from anyone else, or one a client put in front of the proxy's, is ignored.
+*   **CORS:** a preflight from a configured origin (for the events, the hold and the hub's negotiate) names that origin and allows credentials, never `*`; another origin gets no CORS headers; only `GET` and `POST` are allowed; with no origin configured CORS is off; the Development settings allow `http://localhost:5173` and Production does not; an invalid origin (`*`, a wildcard, a path, a trailing `/`, another scheme) stops the API from starting. That the WebSocket handshake refuses another origin is not tested (the test server skips that check), only that the list is configured; it was checked by hand against the running containers.
 *   **Swagger:** the document is served in Development only, and only the endpoints that need a token are marked with the bearer scheme.
 *   **Migrations:** every integration test runs on a schema built by the EF Core migrations, and one test upgrades a database from the first migration.
 
@@ -220,8 +225,8 @@ Done:
 *   [x] Read endpoints for events, seats and bookings.
 *   [x] The event history of a booking.
 *   [x] Live updates with SignalR.
+*   [x] CORS for a browser front end.
 
 Not implemented yet:
 
-*   [ ] CORS for a browser front end.
 *   [ ] A hosted live demo behind a reverse proxy (see the deployment notes).
