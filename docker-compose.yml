@@ -1,8 +1,8 @@
 # Secrets come from a .env file next to this file (copy .env.example to .env).
 # Images are pinned to a release line that only gets fixes: Postgres by major version (its minor releases are
 # fixes only), the others by minor version. The tests start the same Postgres and Redis images (ComposeImages).
-# Infrastructure ports are not published here; docker-compose.override.yml publishes them for local development.
-# On a server run: docker compose -f docker-compose.yml up -d --build
+# Only Caddy (80, 443) publishes ports here; docker-compose.override.yml publishes the API and the infrastructure
+# on 127.0.0.1 for local development. On a server run: docker compose -f docker-compose.yml up -d --build
 
 services:
   # 1. API Service (Port 8080)
@@ -20,14 +20,13 @@ services:
       - Jwt__Key=${JWT_KEY:?Set JWT_KEY in .env}
       - SEATHIVE_ADMIN_EMAIL=${SEATHIVE_ADMIN_EMAIL:-}
       - SEATHIVE_ADMIN_PASSWORD=${SEATHIVE_ADMIN_PASSWORD:-}
-      # Forwarded headers (client address, scheme) are believed only from this network: the reverse proxy joins it.
-      - ReverseProxy__TrustedProxies__0=${COMPOSE_SUBNET:-172.28.0.0/24}
+      # Forwarded headers (client address, scheme) are believed only from the reverse proxy's own address.
+      - ReverseProxy__TrustedProxies__0=${CADDY_IP:-172.28.0.10}
       # The front end's origin (https://..., no trailing "/"); browsers on any other origin are turned away. Unset: CORS is off.
       - Cors__AllowedOrigins__0=${CORS_ALLOWED_ORIGIN:-}
       # No Swagger and no Development settings on a server; docker-compose.override.yml switches to Development locally.
       - ASPNETCORE_ENVIRONMENT=Production
-    ports:
-      - "8080:8080"
+    # No published port: on a server the API is reached through Caddy only.
     depends_on:
       postgres:
         condition: service_healthy
@@ -53,6 +52,29 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+
+  # The only service a server publishes: HTTPS (and HTTP/3) in front of the API. See caddy/Caddyfile.
+  # Postgres, Redis and RabbitMQ (its management UI included) publish nothing; docker-compose.override.yml
+  # publishes them on 127.0.0.1 for local development only.
+  caddy:
+    image: caddy:2.11-alpine
+    environment:
+      # The API's domain; Caddy gets its certificate by itself. Unset: localhost with a local certificate.
+      - SITE_ADDRESS=${SITE_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      default:
+        # Fixed, so the API can trust this one address (ReverseProxy__TrustedProxies__0).
+        ipv4_address: ${CADDY_IP:-172.28.0.10}
+    depends_on:
+      - api
 
   # 3. PostgreSQL Database
   postgres:
@@ -97,12 +119,16 @@ services:
       timeout: 10s
       retries: 10
 
-# A fixed subnet, so the API knows which addresses the reverse proxy can have (see ReverseProxy__TrustedProxies__0).
+# A fixed subnet, so the reverse proxy can have a fixed address (CADDY_IP). The other containers get their addresses
+# from the upper half only (ip_range), so none of them can take the proxy's address before it starts.
 networks:
   default:
     ipam:
       config:
         - subnet: ${COMPOSE_SUBNET:-172.28.0.0/24}
+          ip_range: ${COMPOSE_IP_RANGE:-172.28.0.128/25}
 
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:

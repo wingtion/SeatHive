@@ -4,11 +4,19 @@
 
 services:
   api:
+    # Directly on this machine (Swagger, the smoke scripts); on a server only Caddy reaches it.
+    ports:
+      - "127.0.0.1:8080:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       # The local front end (Vite). Set here because the entry in docker-compose.yml would otherwise
       # replace the one in appsettings.Development.json with an empty value.
       - Cors__AllowedOrigins__0=http://localhost:5173
+
+  # Off unless asked for, so ports 80 and 443 need not be free on this machine:
+  #   docker compose --profile proxy up -d --build
+  caddy:
+    profiles: ["proxy"]
 
   postgres:
     ports:

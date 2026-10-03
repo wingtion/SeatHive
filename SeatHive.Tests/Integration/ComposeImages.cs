@@ -12,7 +12,11 @@ namespace SeatHive.Tests.Integration
         [GeneratedRegex(@"^\s*image:\s*(?<image>(?<name>[a-z0-9._/-]+):[A-Za-z0-9._-]+)\s*$", RegexOptions.Multiline)]
         private static partial Regex ImageLine();
 
-        private static readonly Lazy<string> Compose = new(() => File.ReadAllText(FindComposeFile()));
+        private static readonly Lazy<string> ComposeFile = new(FindComposeFile);
+        private static readonly Lazy<string> Compose = new(() => File.ReadAllText(ComposeFile.Value));
+
+        // The repository root: where docker-compose.yml is.
+        public static string RepositoryRoot => Path.GetDirectoryName(ComposeFile.Value)!;
 
         public static string Of(string name)
         {

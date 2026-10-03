@@ -13,7 +13,7 @@ React + Vite + TypeScript single-page app in `/frontend` of this repo.
 - Talks to the SeatHive API over HTTP with JWT bearer auth.
 - Live seat updates over SignalR via `@microsoft/signalr`.
 - Deployed as a static site on Netlify, not as a Docker container.
-- The API, worker, Postgres, Redis and RabbitMQ stay in Docker Compose on the server.
+- The API, worker, Postgres, Redis and RabbitMQ stay in Docker Compose on the server, behind Caddy, which terminates HTTPS (Let's Encrypt for the API's domain) and is the only service reachable from outside. The front end calls the API and its SignalR hub at that HTTPS address.
 - Local development runs the Vite dev server with a proxy to the API.
 
 ## Users
@@ -40,7 +40,7 @@ A working seat-booking flow with its own "under the hood" layer beside it. The c
 
 - Evaluators typically arrive from a CV, GitHub profile or the README, and may never clone the repo or open Swagger.
 - Today the only way to see the system work is Swagger at `http://localhost:8080/swagger` after `docker-compose up -d --build`, calling `POST /api/setup/create-data` then `POST /api/simulation/simulate-concurrency`.
-- The whole backend runs from one Docker Compose file: API, worker, Postgres, Redis, RabbitMQ.
+- The whole backend runs from one Docker Compose file: API, worker, Postgres, Redis, RabbitMQ, and Caddy in front of the API on a server. Nothing is deployed yet.
 
 ## Capabilities and Constraints
 

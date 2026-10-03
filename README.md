@@ -69,10 +69,10 @@ Two services and a shared contract library:
     *   The hub needs a token. A browser cannot set a header on a WebSocket, so the SignalR client sends the token as the `access_token` query parameter; it is accepted there for the hub only. A connection is closed when its token runs out. Joining is only possible for an event that exists.
     *   One API instance is assumed. With several, each event would reach only one of them (they would share the queue), and clients connected to the others would miss it; that needs a SignalR backplane (Redis) first.
 *   **Rate Limiting:** Register and login are limited to 10 requests per minute per IP address, the booking endpoints (hold, confirm and release together) to 30 requests per minute per user, and the read endpoints to 120 requests per minute per user (per IP address without a token), counted separately so reading never uses up the booking limit. The race simulation is limited to 5 races per minute per user, and one race runs at a time. Requests over the limit get `429`.
-*   **Behind a Reverse Proxy:** The limits per IP address need the client's address. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only when the request comes from a configured proxy (`ReverseProxy:TrustedProxies`, addresses or networks), and only the last hop counts. With nothing configured they are ignored. Docker Compose gives its network a fixed subnet and trusts that subnet.
+*   **Behind a Reverse Proxy:** The limits per IP address need the client's address. `X-Forwarded-For` and `X-Forwarded-Proto` are believed only when the request comes from a configured proxy (`ReverseProxy:TrustedProxies`, addresses or networks), and only the last hop counts. With nothing configured they are ignored. Docker Compose gives Caddy, the reverse proxy, a fixed address and the API trusts that address only.
 *   **Browser Access (CORS):** A page on another origin (the front end) can call the API and connect to the hub only from an origin listed in `Cors:AllowedOrigins`. Each entry is an exact origin such as `https://seathive.example`; `*`, a path or a trailing `/` stops the API from starting. Credentials are allowed, with the methods `GET` and `POST` and the headers `Authorization`, `Content-Type`, `X-Requested-With` and `X-SignalR-User-Agent`. CORS does not cover the WebSocket handshake, so the same list is checked there too: a handshake from another origin gets `403`. With no origin configured CORS is off.
 *   **Configuration:** Secrets (JWT key, database, Redis and RabbitMQ credentials) are not in the repository. The API and the Worker do not start if one is missing.
-*   **Containerization:** **Docker Compose** runs the API, Worker, Postgres, Redis and RabbitMQ. The API and the Worker each apply their own database migrations when they start.
+*   **Containerization:** **Docker Compose** runs the API, Worker, Postgres, Redis and RabbitMQ, and on a server Caddy as the HTTPS reverse proxy in front of the API. The API and the Worker each apply their own database migrations when they start.
 
 ## Event Flow
 
@@ -118,6 +118,7 @@ The API also consumes the booking events itself, on three queues of its own: `bo
 *   **RabbitMQ 4.3** (MassTransit)
 *   **xUnit, Moq & Testcontainers**
 *   **Docker & Docker Compose**
+*   **Caddy 2.11** (reverse proxy, HTTPS)
 
 ## How to Run
 
@@ -137,10 +138,13 @@ The API also consumes the booking events itself, on three queues of its own: `bo
     ```bash
     docker compose up -d --build
     ```
-    This runs the API in the Development environment and publishes the Postgres, Redis and RabbitMQ ports on `127.0.0.1` for local development (`docker-compose.override.yml`); a front end on `http://localhost:5173` may call the API. On a server, use only the main file: it keeps those ports closed and runs the API in the Production environment. Set `CORS_ALLOWED_ORIGIN` in `.env` to the front end's origin there.
+    This runs the API in the Development environment and publishes the API (`8080`) and the Postgres, Redis and RabbitMQ ports on `127.0.0.1` for local development (`docker-compose.override.yml`); a front end on `http://localhost:5173` may call the API. The reverse proxy (Caddy) does not run locally unless asked for; to try it on `https://localhost` (Caddy's own local certificate), add `--profile proxy` (ports 80 and 443 must be free).
+
+    On a server, use only the main file:
     ```bash
     docker compose -f docker-compose.yml up -d --build
     ```
+    Caddy is then the only thing reachable from outside (ports 80 and 443): it terminates HTTPS, with a Let's Encrypt certificate for the domain in `SITE_ADDRESS`, and forwards to the API. The API, Postgres, Redis and RabbitMQ (its management UI included) publish no port. The API runs in the Production environment. Set `SITE_ADDRESS` and `CORS_ALLOWED_ORIGIN` in `.env`; see Deployment Notes.
 
 4.  **Access Swagger:**
     Navigate to `http://localhost:8080/swagger`. Swagger is only enabled in the Development environment, so it is there with `docker compose up` on your machine and not on a server started with the main file only.
@@ -163,19 +167,28 @@ Settings:
 *   API, section `Holds`: `DurationSeconds` (300), `MaxActivePerUser` (4), `PaymentGraceSeconds` (30) and `SweepIntervalSeconds` (5).
 *   API, section `RateLimiting`: `Auth:PermitLimit` (10), `Booking:PermitLimit` (30), `Read:PermitLimit` (120) and `Simulation:PermitLimit` (5), each per minute.
 *   API, section `Simulation`: `WinnerHoldSeconds` (10), how long the winner of a race keeps the seat.
-*   API, `ReverseProxy:TrustedProxies`: a list of addresses or networks; empty by default. Docker Compose sets it to the subnet of its network (`COMPOSE_SUBNET` in `.env`, `172.28.0.0/24` by default).
+*   API, `ReverseProxy:TrustedProxies`: a list of addresses or networks; empty by default. Docker Compose sets it to Caddy's fixed address (`CADDY_IP` in `.env`, `172.28.0.10` by default).
 *   API, `Cors:AllowedOrigins`: a list of origins; empty by default, which turns CORS off. In the Development environment it is `http://localhost:5173` (`appsettings.Development.json`, and `docker-compose.override.yml` for compose). On a server Docker Compose sets it from `CORS_ALLOWED_ORIGIN` in `.env`.
 *   Worker, section `Payment`: `FailureRate` (0.2), `MinDelayMs` (1000), `MaxDelayMs` (3000), `ChargeRetentionDays` (7) and `CleanupIntervalMinutes` (60).
 
 ## Deployment Notes
 
-Nothing is deployed yet. What a deployment behind a reverse proxy (Caddy) has to take care of:
+Nothing is deployed yet. The main compose file is ready for a server; what it already takes care of:
 
-*   **Mask the token in access logs.** A WebSocket connection to the hub carries the JWT in the address (`/hubs/seats?access_token=...`). A reverse proxy that logs request addresses writes those tokens into its log, where they stay valid for up to 2 hours. Configure the proxy's log to drop or replace the `access_token` query parameter before the hub is reachable from outside.
-*   **Put the proxy in the compose network and do not publish the API's port.** The API believes `X-Forwarded-For` from the compose subnet only. The whole subnet is trusted, so every container in it could send that header; give the proxy a fixed address and narrow `ReverseProxy:TrustedProxies` to it.
+*   **HTTPS through Caddy** (`caddy/Caddyfile`). Caddy terminates TLS (certificates from Let's Encrypt, renewed by itself), redirects HTTP to HTTPS, serves HTTP/3, and forwards everything to the API, WebSockets included. It forwards to the API only.
+*   **Only Caddy is reachable.** On a server only ports 80 and 443 are published. The API, Postgres, Redis and RabbitMQ, its management UI (15672) included, publish nothing and are reachable from inside the compose network only. A test reads the compose files the way Docker Compose does and checks this.
+*   **The token is masked in the access log.** A WebSocket connection to the hub carries the JWT in the address (`/hubs/seats?access_token=...`), where it stays valid for up to 2 hours. Caddy's access log replaces it with `REDACTED`; it leaves out `Authorization` and `Cookie` headers by itself.
+*   **Forwarded headers from the proxy only.** Caddy has a fixed address (`CADDY_IP`), and the API believes `X-Forwarded-For` and `X-Forwarded-Proto` from that one address only. Caddy itself ignores what a client sends in `X-Forwarded-For`, so the limits per IP address count the real client.
+*   **Pinned images**, the same Postgres and Redis versions the tests run.
+
+What is still to do on the server itself:
+
+*   **A domain and open ports.** Point a DNS record at the server, open ports 80 and 443 (Let's Encrypt needs both), and set `SITE_ADDRESS` to that domain.
 *   **Name the front end's origin.** Set `CORS_ALLOWED_ORIGIN` to the production origin of the front end only (`https://...`, no trailing `/`), not to preview deployments. Without it browsers on other origins cannot call the API.
-*   **Start the main compose file only.** It runs the API in the Production environment: no Swagger and no Development settings (such as the `localhost` origin).
+*   **Start the main compose file only.** It runs the API in the Production environment: no Swagger, no Development settings (such as the `localhost` origin) and no published infrastructure ports.
 *   **One API instance.** See Live Updates above for why more need a backplane.
+
+What was checked by hand, with the main compose file and Caddy on `https://localhost`: only ports 80 and 443 are open; HTTP is redirected to HTTPS; RabbitMQ's management UI cannot be reached through Caddy, not even with its own host name; a WebSocket to the hub works through Caddy and gets `raceFinished`; the payment flow runs over RabbitMQ 4.3; the token does not appear in Caddy's log and `access_token=REDACTED` does; and eleven logins, each with a different invented `X-Forwarded-For`, still hit the per-address limit on the eleventh.
 
 ## Concurrency Simulation
 
@@ -223,6 +236,7 @@ There are no unit tests: every test needs Docker.
 *   **Booking history (API and Worker consumers on one in-memory bus):** a successful booking, a failed payment with a retry, a release, an expiry and a refund each leave their events in order; an event that happened earlier but arrived later is listed earlier; the same event delivered twice, or again after the inbox forgot it, is one row; when marking the message as consumed fails, the row is rolled back with it; a rolled back change leaves no row; another user and an admin get `403`.
 *   **Race simulation (WebApplicationFactory, a SignalR client over long polling):** any signed-in user can race, nobody without a token; 20 racers by default, each a different racer, exactly one winner, and every loser either `seat_locked` with the lock `busy` or `seat_held` with the lock `acquired`; with Redis unreachable every lock is `unavailable` and there is still one winner; races one after another each have a winner; the winner's hold is still there one second before its time (the test moves the clock) and released through `HoldReleased` at its time, also with another configured time; a race on a seat whose winner still holds it is refused with `seat_held_by_race` and its `releasesAt`, and allowed again after the release; a seat that is held, booked or missing, too few or too many racers, too few free racers, a second race while one is running (the first is stopped at the lock by the test) and the per-user limit are each refused with their code; racer accounts cannot sign in or be registered; watchers of the event get `raceFinished` with the same attempts, watchers of another event nothing. A race against the running containers was also checked by hand: 1 winner, 19 losers at the lock, release after 10 seconds, and with Redis stopped 19 losers at the database.
 *   **Forwarded headers:** behind a trusted proxy each client address gets its own limit; a forwarded address from anyone else, or one a client put in front of the proxy's, is ignored.
+*   **What a server exposes:** the compose files as Docker Compose reads them (`docker compose config`): on a server only Caddy publishes ports (80, 443/tcp, 443/udp), nothing publishes 8080, 5432, 6379, 5672 or 15672; Caddy forwards to `api:8080` only, and the API trusts Caddy's address only; locally everything but Caddy is published on `127.0.0.1` only. Caddy itself (TLS, the masked log, the WebSocket) is not run by the tests; see Deployment Notes for what was checked by hand.
 *   **CORS:** a preflight from a configured origin (for the events, the hold and the hub's negotiate) names that origin and allows credentials, never `*`; another origin gets no CORS headers; only `GET` and `POST` are allowed; with no origin configured CORS is off; the Development settings allow `http://localhost:5173` and Production does not; an invalid origin (`*`, a wildcard, a path, a trailing `/`, another scheme) stops the API from starting. That the WebSocket handshake refuses another origin is not tested (the test server skips that check), only that the list is configured; it was checked by hand against the running containers.
 *   **Swagger:** the document is served in Development only, and only the endpoints that need a token are marked with the bearer scheme.
 *   **Migrations:** every integration test runs on a schema built by the EF Core migrations, and one test upgrades a database from the first migration.
@@ -242,4 +256,4 @@ Done:
 
 Not implemented yet:
 
-*   [ ] A hosted live demo behind a reverse proxy (see the deployment notes).
+*   [ ] A hosted live demo. The compose files and the reverse proxy are ready; a server, a domain and the front end are not (see the deployment notes).
