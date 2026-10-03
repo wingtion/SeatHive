@@ -38,14 +38,16 @@ namespace SeatHive.Api.Hubs
 
         // Start watching the seats of an event. This is the only way into a group: the group's name is built here,
         // from an event that exists, for a connection that has signed in.
-        public async Task JoinEvent(int eventId)
+        // An unknown event is answered, not thrown: a thrown error is logged by SignalR as a server failure.
+        public async Task<JoinEventResult> JoinEvent(int eventId)
         {
             if (!await _context.Events.AnyAsync(e => e.Id == eventId, Context.ConnectionAborted))
             {
-                throw new HubException(ErrorCodes.EventNotFound);
+                return new JoinEventResult(false, ErrorCodes.EventNotFound);
             }
 
             await Groups.AddToGroupAsync(Context.ConnectionId, GroupOf(eventId), Context.ConnectionAborted);
+            return new JoinEventResult(true, null);
         }
 
         public Task LeaveEvent(int eventId)
@@ -62,6 +64,9 @@ namespace SeatHive.Api.Hubs
             return connection.User.FindFirst(JwtRegisteredClaimNames.Sub)?.Value;
         }
     }
+
+    // The answer to JoinEvent. Error is an error code (event_not_found) when the connection did not join.
+    public record JoinEventResult(bool Joined, string? Error);
 
     // Public: it says whether a seat is taken and until when, never by whom or by which booking.
     public record SeatStatusMessage(int EventId, int SeatId, SeatStatus Status, DateTime? HeldUntil);

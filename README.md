@@ -56,7 +56,7 @@ Two services and a shared contract library:
     *   Payments, refunds and notifications are marked `"simulated": true`.
     *   The history lags behind the change by the delivery delay of the outbox (about a second). Only the owner can read it, like the booking itself.
 *   **Live Updates:** A SignalR hub at `/hubs/seats` sends three messages. Clients only listen; nothing sent to the hub changes a booking.
-    *   `seatStatusChanged` `{ eventId, seatId, status, heldUntil }` goes to everyone watching an event (call `JoinEvent(eventId)`, and `LeaveEvent(eventId)` to stop). Like the seat endpoint, it never says who holds a seat.
+    *   `seatStatusChanged` `{ eventId, seatId, status, heldUntil }` goes to everyone watching an event (call `JoinEvent(eventId)`, and `LeaveEvent(eventId)` to stop). `JoinEvent` answers `{ joined, error }`: for an event that does not exist, `joined` is `false` and `error` is `event_not_found`. Like the seat endpoint, it never says who holds a seat.
     *   `bookingEvent` goes to the owner of a booking, on all their connections, for every event of the booking. It has the fields of a history item plus `bookingId`, and the same `eventId`, so a client can merge the two.
     *   `demoDataReset` goes to everyone when the demo data was reset: read everything again.
     *   Nothing is sent from the request that made the change. Every message starts as an event in the outbox and is sent when that event comes back over the bus, so a change that was rolled back is never announced. Updates therefore follow the change by the delivery delay of the outbox (about a second).

@@ -54,7 +54,14 @@ namespace SeatHive.Tests.Integration.Api
             public int Resets => _resets;
 
             public Task StartAsync() => _connection.StartAsync();
-            public Task JoinAsync(int eventId) => _connection.InvokeAsync("JoinEvent", eventId);
+            public Task<JsonElement> TryJoinAsync(int eventId) => _connection.InvokeAsync<JsonElement>("JoinEvent", eventId);
+
+            public async Task JoinAsync(int eventId)
+            {
+                var result = await TryJoinAsync(eventId);
+                Assert.True(result.GetProperty("joined").GetBoolean(), $"Could not join event {eventId}: {result}");
+            }
+
             public Task LeaveAsync(int eventId) => _connection.InvokeAsync("LeaveEvent", eventId);
 
             public List<JsonElement> ChangesOf(int seatId) =>
@@ -181,15 +188,30 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal(HttpStatusCode.Unauthorized, api.StatusCode);
         }
 
+        // An unknown event is an answer, not an error: the call returns normally and says why it did not join.
         [Fact]
-        public async Task JoiningAnEvent_ShouldBeRejected_WhenTheEventDoesNotExist()
+        public async Task JoiningAnEvent_ShouldAnswerEventNotFound_WhenTheEventDoesNotExist()
         {
             var (_, token, _) = await _api.CreateUserAsync();
             await using var listener = await ConnectAsync(token);
 
-            var error = await Assert.ThrowsAsync<HubException>(() => listener.JoinAsync(int.MaxValue));
+            var result = await listener.TryJoinAsync(int.MaxValue);
 
-            Assert.Contains("event_not_found", error.Message);
+            Assert.False(result.GetProperty("joined").GetBoolean());
+            Assert.Equal("event_not_found", result.GetProperty("error").GetString());
+        }
+
+        [Fact]
+        public async Task JoiningAnEvent_ShouldAnswerJoined_WhenTheEventExists()
+        {
+            var (eventId, _) = await _fixture.CreateEventAsync(seats: 1, _database);
+            var (_, token, _) = await _api.CreateUserAsync();
+            await using var listener = await ConnectAsync(token);
+
+            var result = await listener.TryJoinAsync(eventId);
+
+            Assert.True(result.GetProperty("joined").GetBoolean());
+            Assert.Equal(JsonValueKind.Null, result.GetProperty("error").ValueKind);
         }
 
         // ---- Seat status for everyone watching an event ----
