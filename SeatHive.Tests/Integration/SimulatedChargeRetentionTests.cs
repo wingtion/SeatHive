@@ -177,6 +177,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task CleanupService_ShouldDeleteOldCharges_EveryInterval()
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var services = await BuildWorkerServicesAsync();
             var cleanup = services.GetRequiredService<SimulatedChargeCleanup>();
             var old = await AddChargeAsync(services, Now.AddDays(-8));
@@ -185,7 +186,7 @@ namespace SeatHive.Tests.Integration
             // The service starts its loop in the background; wait until it is really waiting for its first interval.
             var waiting = _clock.NextWaitAsync();
             await cleanup.StartAsync(CancellationToken.None);
-            await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+            await waiting.WaitAsync(TimeSpan.FromSeconds(10), ct);
             try
             {
                 // Nothing happens before the first interval has passed (60 minutes by default).
@@ -199,7 +200,7 @@ namespace SeatHive.Tests.Integration
                 while ((await RemainingKeysAsync(services)).Contains(old))
                 {
                     Assert.True(DateTime.UtcNow < deadline, "The old charge was not deleted.");
-                    await Task.Delay(20);
+                    await Task.Delay(20, ct);
                 }
 
                 Assert.Equal(new[] { recent }, await RemainingKeysAsync(services));

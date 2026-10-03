@@ -74,7 +74,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = _fixture.Api.CreateClient();
 
-            var response = await client.PostAsJsonAsync("/api/Auth/login", new { email, password });
+            var response = await client.PostAsJsonAsync("/api/Auth/login", new { email, password }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         }
@@ -86,7 +86,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
+            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId }, cancellationToken: TestContext.Current.CancellationToken);
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);

@@ -144,7 +144,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             await using var connection = _api.CreateHubConnection(token: null);
 
-            var error = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync());
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync(TestContext.Current.CancellationToken));
 
             Assert.Equal(HttpStatusCode.Unauthorized, error.StatusCode);
         }
@@ -155,7 +155,7 @@ namespace SeatHive.Tests.Integration.Api
             var (_, _, userId) = await _api.CreateUserAsync();
             await using var connection = _api.CreateHubConnection(ExpiredToken(userId));
 
-            var error = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync());
+            var error = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync(TestContext.Current.CancellationToken));
 
             Assert.Equal(HttpStatusCode.Unauthorized, error.StatusCode);
         }
@@ -166,7 +166,7 @@ namespace SeatHive.Tests.Integration.Api
             var (_, token, _) = await _api.CreateUserAsync();
             await using var connection = _api.CreateHubConnection(token);
 
-            await connection.StartAsync();
+            await connection.StartAsync(TestContext.Current.CancellationToken);
 
             Assert.Equal(HubConnectionState.Connected, connection.State);
         }
@@ -176,12 +176,13 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task TokenInTheQueryString_ShouldBeAccepted_ByTheHubOnly()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, token, _) = await _api.CreateUserAsync();
             var client = _api.CreateClient();
 
-            var hub = await client.PostAsync($"/hubs/seats/negotiate?negotiateVersion=1&access_token={token}", null);
-            var hubWithoutToken = await client.PostAsync("/hubs/seats/negotiate?negotiateVersion=1", null);
-            var api = await client.GetAsync($"/api/Booking?access_token={token}");
+            var hub = await client.PostAsync($"/hubs/seats/negotiate?negotiateVersion=1&access_token={token}", null, ct);
+            var hubWithoutToken = await client.PostAsync("/hubs/seats/negotiate?negotiateVersion=1", null, ct);
+            var api = await client.GetAsync($"/api/Booking?access_token={token}", ct);
 
             Assert.Equal(HttpStatusCode.OK, hub.StatusCode);
             Assert.Equal(HttpStatusCode.Unauthorized, hubWithoutToken.StatusCode);
@@ -219,14 +220,15 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task SeatStatus_ShouldReachEveryoneWatchingTheEvent_AsTheBookingMovesOn()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (eventId, seatIds) = await _fixture.CreateEventAsync(seats: 2, _database);
             var (client, _, _) = await _api.CreateUserAsync();
             var (_, watcherToken, _) = await _api.CreateUserAsync();
             await using var watcher = await ConnectAsync(watcherToken, eventId);
 
             // Held, with the moment the hold runs out.
-            var holdResponse = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = seatIds[0] });
-            var hold = await holdResponse.Content.ReadFromJsonAsync<JsonElement>();
+            var holdResponse = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = seatIds[0] }, cancellationToken: ct);
+            var hold = await holdResponse.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             await WaitForStatusAsync(watcher, seatIds[0], "held");
             var held = watcher.ChangesOf(seatIds[0]).First();
             Assert.Equal(hold.GetProperty("expiresAt").GetDateTime(), held.GetProperty("heldUntil").GetDateTime());
@@ -234,13 +236,13 @@ namespace SeatHive.Tests.Integration.Api
 
             // Released: free again.
             var bookingId = hold.GetProperty("bookingId").GetInt32();
-            (await client.PostAsync($"/api/Booking/{bookingId}/release", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/release", null, ct)).EnsureSuccessStatusCode();
             await WaitForStatusAsync(watcher, seatIds[0], "available");
             Assert.Equal(JsonValueKind.Null, watcher.ChangesOf(seatIds[0]).Last().GetProperty("heldUntil").ValueKind);
 
             // Paid for: booked.
             var paid = await HoldAsync(client, seatIds[1]);
-            (await client.PostAsync($"/api/Booking/{paid}/confirm", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{paid}/confirm", null, ct)).EnsureSuccessStatusCode();
             await WaitForStatusAsync(watcher, seatIds[1], "booked");
             Assert.Equal("held", watcher.StatusesOf(seatIds[1]).First());
             Assert.Equal(JsonValueKind.Null, watcher.ChangesOf(seatIds[1]).Last().GetProperty("heldUntil").ValueKind);
@@ -270,7 +272,7 @@ namespace SeatHive.Tests.Integration.Api
             await using var watcher = await ConnectAsync(watcherToken, eventId);
 
             var bookingId = await HoldAsync(client, seatIds[0]);
-            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
             await WaitForStatusAsync(watcher, seatIds[0], "booked");
 
             // Held and booked alike: exactly these fields.
@@ -304,6 +306,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task SeatStatus_ShouldNotBeAnnounced_ForAChangeThatWasRolledBack()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (eventId, seatIds) = await _fixture.CreateEventAsync(seats: 2, _database);
             var (client, token, userId) = await _api.CreateUserAsync();
             await using var watcher = await ConnectAsync(token, eventId);
@@ -315,10 +318,10 @@ namespace SeatHive.Tests.Integration.Api
                 var publisher = scope.ServiceProvider.GetRequiredService<IPublishEndpoint>();
                 var now = _api.Clock.GetUtcNow().UtcDateTime;
 
-                await using var transaction = await db.Database.BeginTransactionAsync();
-                await publisher.Publish(new SeatHeld(-1, seatIds[0], userId, now, now.AddMinutes(5)));
-                await db.SaveChangesAsync();
-                await transaction.RollbackAsync();
+                await using var transaction = await db.Database.BeginTransactionAsync(ct);
+                await publisher.Publish(new SeatHeld(-1, seatIds[0], userId, now, now.AddMinutes(5)), ct);
+                await db.SaveChangesAsync(ct);
+                await transaction.RollbackAsync(ct);
             }
 
             // ...and a real hold afterwards. Once that one is announced, the first would have been too.
@@ -333,6 +336,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task BookingEvents_ShouldReachTheOwner_OnEveryConnection_AndNobodyElse()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (eventId, seatIds) = await _fixture.CreateEventAsync(seats: 1, _database);
             var (owner, ownerToken, _) = await _api.CreateUserAsync();
             var (_, otherToken, _) = await _api.CreateUserAsync();
@@ -341,7 +345,7 @@ namespace SeatHive.Tests.Integration.Api
             await using var other = await ConnectAsync(otherToken, eventId);
 
             var bookingId = await HoldAsync(owner, seatIds[0]);
-            (await owner.PostAsync($"/api/Booking/{bookingId}/confirm", null)).EnsureSuccessStatusCode();
+            (await owner.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct)).EnsureSuccessStatusCode();
 
             var expected = new[] { "seatHeld", "paymentRequested", "paymentSucceeded", "bookingConfirmed", "notificationSent" };
             foreach (var connection in new[] { ownerConnection, ownerSecondConnection })
@@ -368,11 +372,11 @@ namespace SeatHive.Tests.Integration.Api
             var deadline = DateTime.UtcNow.AddSeconds(10);
             while (true)
             {
-                history = await owner.GetFromJsonAsync<JsonElement>($"/api/Booking/{bookingId}/history");
+                history = await owner.GetFromJsonAsync<JsonElement>($"/api/Booking/{bookingId}/history", cancellationToken: ct);
                 if (history.GetProperty("totalCount").GetInt32() >= expected.Length) break;
 
                 Assert.True(DateTime.UtcNow < deadline, "The history did not get all five events.");
-                await Task.Delay(20);
+                await Task.Delay(20, ct);
             }
             var historyIds = history.GetProperty("items").EnumerateArray().Select(i => i.GetProperty("eventId").GetGuid()).Order();
             var liveIds = ownerConnection.BookingEvents.Select(e => e.GetProperty("eventId").GetGuid()).Distinct().Order();
@@ -387,7 +391,7 @@ namespace SeatHive.Tests.Integration.Api
             await using var connection = await ConnectAsync(token);
 
             var bookingId = await HoldAsync(owner, seatIds[0]);
-            (await owner.PostAsJsonAsync($"/api/Booking/{bookingId}/confirm", new { simulatePaymentFailure = true })).EnsureSuccessStatusCode();
+            (await owner.PostAsJsonAsync($"/api/Booking/{bookingId}/confirm", new { simulatePaymentFailure = true }, cancellationToken: TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
             await WaitForTypeAsync(connection, bookingId, "paymentFailed");
             var failed = connection.BookingEvents.First(e => e.GetProperty("type").GetString() == "paymentFailed");
@@ -404,7 +408,7 @@ namespace SeatHive.Tests.Integration.Api
             await using var connection = await ConnectAsync(token);
             var admin = await _api.CreateAdminClientAsync();
 
-            (await admin.PostAsync("/api/Setup/create-data", null)).EnsureSuccessStatusCode();
+            (await admin.PostAsync("/api/Setup/create-data", null, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
             await WaitUntilAsync(() => connection.Resets > 0, () => "The reset was not announced.");
         }

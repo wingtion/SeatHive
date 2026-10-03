@@ -83,7 +83,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task Proxy_ShouldForwardToTheApiOnly_AndBeTheOnlyAddressTheApiTrusts()
         {
-            var caddyfile = await File.ReadAllTextAsync(Path.Combine(ComposeImages.RepositoryRoot, "caddy", "Caddyfile"));
+            var caddyfile = await File.ReadAllTextAsync(Path.Combine(ComposeImages.RepositoryRoot, "caddy", "Caddyfile"), TestContext.Current.CancellationToken);
             var upstreams = Regex.Matches(caddyfile, @"^\s*reverse_proxy\s+(?<upstreams>[^{\r\n]+)", RegexOptions.Multiline)
                 .SelectMany(m => m.Groups["upstreams"].Value.Split(' ', StringSplitOptions.RemoveEmptyEntries))
                 .ToList();

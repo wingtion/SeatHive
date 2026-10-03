@@ -58,14 +58,14 @@ namespace SeatHive.Tests.Integration.Api
             return paymentId;
         }
 
-        public async Task InitializeAsync()
+        public async ValueTask InitializeAsync()
         {
             await MigrateWorkerAsync(Database);
             // Starts the host, which creates the API's tables: tests may write to the database before their first request.
             Api.CreateClient().Dispose();
         }
 
-        public async Task DisposeAsync() => await Api.DisposeAsync();
+        public async ValueTask DisposeAsync() => await Api.DisposeAsync();
     }
 
     public sealed class HistoryHost : ApiWithWorkerHost

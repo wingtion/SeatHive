@@ -233,7 +233,7 @@ namespace SeatHive.Tests.Integration.Api
             // The body is read once: the code and when the seat comes free.
             Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
             Assert.Equal("application/problem+json", refused.Content.Headers.ContentType?.MediaType);
-            var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync()).RootElement;
+            var body = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(TestContext.Current.CancellationToken)).RootElement;
             Assert.Equal(ErrorCodes.SeatHeldByRace, body.GetProperty("code").GetString());
             Assert.Equal(race.GetProperty("winner").GetProperty("releasesAt").GetDateTime(), body.GetProperty("releasesAt").GetDateTime());
 
@@ -251,7 +251,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var (_, seatIds) = await _fixture.CreateEventAsync(seats: 1);
             var client = await _api.CreateUserClientAsync();
-            (await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = seatIds[0] })).EnsureSuccessStatusCode();
+            (await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = seatIds[0] }, cancellationToken: TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
 
             var response = await RaceAsync(client, seatIds[0], racers: 3);
 
@@ -261,10 +261,11 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Race_ShouldBeRefused_WhenTheSeatIsBooked()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, seatIds) = await _fixture.CreateEventAsync(seats: 1);
             var client = await _api.CreateUserClientAsync();
-            var hold = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = seatIds[0] });
-            var bookingId = (await hold.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("bookingId").GetInt32();
+            var hold = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = seatIds[0] }, cancellationToken: ct);
+            var bookingId = (await hold.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct)).GetProperty("bookingId").GetInt32();
             await _fixture.ConfirmThroughPaymentAsync(client, bookingId);
 
             var response = await RaceAsync(client, seatIds[0], racers: 3);
@@ -323,7 +324,7 @@ namespace SeatHive.Tests.Integration.Api
             var client = ApiFactory.Authorize(api.CreateClient(), token);
 
             var first = RaceAsync(client, seatIds[0], racers: 3);
-            await gatedLock.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+            await gatedLock.Entered.Task.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
             var second = await RaceAsync(client, seatIds[1], racers: 3);
             gatedLock.Gate.TrySetResult();
 
@@ -369,17 +370,18 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task RacerAccounts_ShouldNotBeUsable_BySomeoneElse()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, seatIds) = await _fixture.CreateEventAsync(seats: 1);
             var client = await _api.CreateUserClientAsync();
             await RaceOkAsync(client, seatIds[0], racers: 2);
 
             await using var db = _fixture.CreateContext();
-            var racers = await db.Users.AsNoTracking().Where(u => u.Email.EndsWith("@" + RacerDomain)).ToListAsync();
+            var racers = await db.Users.AsNoTracking().Where(u => u.Email.EndsWith("@" + RacerDomain)).ToListAsync(cancellationToken: ct);
             Assert.Equal(50, racers.Count);
             Assert.All(racers, r => Assert.Equal(Roles.Racer, r.Role));
 
             var anonymous = _api.CreateClient();
-            var login = await anonymous.PostAsJsonAsync("/api/Auth/login", new { email = racers[0].Email, password = "Passw0rd!" });
+            var login = await anonymous.PostAsJsonAsync("/api/Auth/login", new { email = racers[0].Email, password = "Passw0rd!" }, cancellationToken: ct);
             await ProblemAssert.HasCodeAsync(login, HttpStatusCode.Unauthorized, ErrorCodes.InvalidCredentials);
 
             var register = await ApiFactory.RegisterAsync(anonymous, $"someone-{Guid.NewGuid():N}@{RacerDomain}", "Passw0rd!");
@@ -408,7 +410,7 @@ namespace SeatHive.Tests.Integration.Api
             while (watching.IsEmpty)
             {
                 Assert.True(DateTime.UtcNow < deadline, "raceFinished did not arrive.");
-                await Task.Delay(20);
+                await Task.Delay(20, TestContext.Current.CancellationToken);
             }
 
             var sent = Assert.Single(watching);

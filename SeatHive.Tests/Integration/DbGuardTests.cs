@@ -54,7 +54,7 @@ namespace SeatHive.Tests.Integration
             Assert.Single(ContainersFixture.PublishedTo<SeatHeld>(bus));
 
             await using var verifyDb = _fixture.CreateContext();
-            Assert.Equal(1, await verifyDb.Bookings.CountAsync(b => b.SeatId == seatId));
+            Assert.Equal(1, await verifyDb.Bookings.CountAsync(b => b.SeatId == seatId, cancellationToken: TestContext.Current.CancellationToken));
         }
 
         private sealed class WaitUntilAllHaveReadSeat : DbCommandInterceptor

@@ -26,6 +26,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Hold_ShouldSucceed_WhenRedisCannotBeReached()
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var api = new ApiFactory(_fixture, new Dictionary<string, string?>
             {
                 ["ConnectionStrings__Redis"] = RedisLockServiceTests.UnreachableRedis
@@ -33,10 +34,10 @@ namespace SeatHive.Tests.Integration.Api
             var client = await api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
+            var body = await response.Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal("held", body.GetProperty("status").GetString());
         }
 
@@ -55,16 +56,17 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task UnexpectedError_ShouldGetAProblemBody_WithoutDetails()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, token, _) = await _fixture.Api.CreateUserAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
             await using var broken = _fixture.Api.WithWebHostBuilder(builder =>
                 builder.ConfigureTestServices(services => services.AddScoped<IRedisLockService, BrokenLockService>()));
             var client = ApiFactory.Authorize(broken.CreateClient(), token);
 
-            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId });
+            var response = await client.PostAsJsonAsync(HoldUrl, new { seatId }, cancellationToken: ct);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.InternalServerError, ErrorCodes.InternalError);
-            Assert.DoesNotContain(BrokenLockService.Detail, await response.Content.ReadAsStringAsync());
+            Assert.DoesNotContain(BrokenLockService.Detail, await response.Content.ReadAsStringAsync(ct));
         }
     }
 }

@@ -27,9 +27,9 @@ namespace SeatHive.Tests.Integration.Api
 
             public ApiFactory Api { get; }
 
-            public Task InitializeAsync() => Task.CompletedTask;
+            public ValueTask InitializeAsync() => ValueTask.CompletedTask;
 
-            public async Task DisposeAsync() => await Api.DisposeAsync();
+            public async ValueTask DisposeAsync() => await Api.DisposeAsync();
         }
 
         public SwaggerTests(ContainersFixture fixture, DevelopmentHost development)
@@ -65,11 +65,12 @@ namespace SeatHive.Tests.Integration.Api
         [InlineData("Production")]
         public async Task Swagger_ShouldNotBeServed_OutsideDevelopment(string environment)
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var api = new ApiFactory(_fixture, environment: environment);
             var client = api.CreateClient();
 
-            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(DocumentUrl)).StatusCode);
-            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/swagger/index.html")).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync(DocumentUrl, ct)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await client.GetAsync("/swagger/index.html", ct)).StatusCode);
         }
 
         [Fact]

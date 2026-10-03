@@ -29,17 +29,18 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Auth_ShouldReturn429_WhenLimitIsExceeded()
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var api = CreateLimitedApi();
             var client = api.CreateClient();
             var login = new { email = ApiFactory.UniqueEmail(), password = "WrongPassw0rd!" };
 
             for (var i = 0; i < Limit; i++)
             {
-                var allowed = await client.PostAsJsonAsync("/api/Auth/login", login);
+                var allowed = await client.PostAsJsonAsync("/api/Auth/login", login, cancellationToken: ct);
                 Assert.Equal(HttpStatusCode.Unauthorized, allowed.StatusCode);
             }
 
-            var rejected = await client.PostAsJsonAsync("/api/Auth/login", login);
+            var rejected = await client.PostAsJsonAsync("/api/Auth/login", login, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
         }
@@ -47,6 +48,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Booking_ShouldReturn429_WhenLimitIsExceeded()
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var api = CreateLimitedApi();
             // The user gets its token without logging in, so the auth limit is not touched here.
             var client = await api.CreateUserClientAsync();
@@ -54,11 +56,11 @@ namespace SeatHive.Tests.Integration.Api
 
             for (var i = 0; i < Limit; i++)
             {
-                var allowed = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
+                var allowed = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId }, cancellationToken: ct);
                 Assert.NotEqual(HttpStatusCode.TooManyRequests, allowed.StatusCode);
             }
 
-            var rejected = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
+            var rejected = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId }, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
         }

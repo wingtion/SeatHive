@@ -76,7 +76,7 @@ namespace SeatHive.Tests.Integration.Api
         [InlineData("/api/Events/2147483647/seats")]
         public async Task UnknownEvent_ShouldReturn404(string url)
         {
-            var response = await Anonymous().GetAsync(url);
+            var response = await Anonymous().GetAsync(url, TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.NotFound, "event_not_found");
         }
@@ -98,7 +98,7 @@ namespace SeatHive.Tests.Integration.Api
             Assert.Equal("held", held.GetProperty("status").GetString());
             Assert.Equal(hold.GetProperty("expiresAt").GetDateTime(), held.GetProperty("heldUntil").GetDateTime());
 
-            (await client.PostAsync($"/api/Booking/{bookingId}/release", null)).EnsureSuccessStatusCode();
+            (await client.PostAsync($"/api/Booking/{bookingId}/release", null, TestContext.Current.CancellationToken)).EnsureSuccessStatusCode();
             var released = await ReadSeatAsync(eventId, seatId);
             Assert.Equal("available", released.GetProperty("status").GetString());
             Assert.Equal(JsonValueKind.Null, released.GetProperty("heldUntil").ValueKind);
@@ -112,7 +112,7 @@ namespace SeatHive.Tests.Integration.Api
             var hold = await HoldAsync(client, seatIds[0]);
             var bookingId = hold.GetProperty("bookingId").GetInt32();
 
-            Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).StatusCode);
+            Assert.Equal(HttpStatusCode.Accepted, (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, TestContext.Current.CancellationToken)).StatusCode);
 
             var seat = await ReadSeatAsync(eventId, seatIds[0]);
             Assert.Equal("held", seat.GetProperty("status").GetString());
@@ -151,7 +151,7 @@ namespace SeatHive.Tests.Integration.Api
                     CreatedAt = now.AddMinutes(-6),
                     ExpiresAt = now.AddMinutes(-1)
                 });
-                await db.SaveChangesAsync();
+                await db.SaveChangesAsync(TestContext.Current.CancellationToken);
             }
 
             var seat = await ReadSeatAsync(eventId, seatIds[0]);
@@ -163,15 +163,16 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task AnonymousSeatResponse_ShouldNotSayWhoHoldsTheSeat()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (eventId, seatIds) = await _fixture.CreateEventAsync(seats: 3);
             var client = await _fixture.Api.CreateUserClientAsync();
             await HoldIdAsync(client, seatIds[1]);
             var booked = await HoldIdAsync(client, seatIds[2]);
             await _fixture.ConfirmThroughPaymentAsync(client, booked);
 
-            var response = await Anonymous().GetAsync($"/api/Events/{eventId}/seats");
+            var response = await Anonymous().GetAsync($"/api/Events/{eventId}/seats", ct);
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var raw = await response.Content.ReadAsStringAsync();
+            var raw = await response.Content.ReadAsStringAsync(ct);
             var page = JsonDocument.Parse(raw).RootElement;
 
             // Free, held and booked: exactly these fields, whatever the state.
@@ -198,7 +199,7 @@ namespace SeatHive.Tests.Integration.Api
         [InlineData("/api/Events/1/seats?pageSize=501")]
         public async Task AnonymousPaging_ShouldRejectValuesOutsideTheLimits(string url)
         {
-            var response = await Anonymous().GetAsync(url);
+            var response = await Anonymous().GetAsync(url, TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.BadRequest, "validation_failed");
         }
@@ -211,7 +212,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.GetAsync(url);
+            var response = await client.GetAsync(url, TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.BadRequest, "validation_failed");
         }
@@ -259,7 +260,7 @@ namespace SeatHive.Tests.Integration.Api
         [InlineData("/api/Booking/1")]
         public async Task BookingRead_ShouldReturn401_WithoutAToken(string url)
         {
-            var response = await Anonymous().GetAsync(url);
+            var response = await Anonymous().GetAsync(url, TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.Unauthorized, "unauthorized");
         }
@@ -271,7 +272,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = ApiFactory.Authorize(Anonymous(), AuthorizationTests.CreateToken(sub: "not-a-number"));
 
-            var response = await client.GetAsync(url);
+            var response = await client.GetAsync(url, TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.Unauthorized, "invalid_token");
         }
@@ -281,7 +282,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsync("/api/Setup/create-data", null);
+            var response = await client.PostAsync("/api/Setup/create-data", null, TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.Forbidden, "forbidden");
         }
@@ -336,14 +337,15 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task BookingDetail_ShouldReturn403_ForAnotherUser_AndForAdmin()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, seatIds) = await _fixture.CreateEventAsync(seats: 1);
             var owner = await _fixture.Api.CreateUserClientAsync();
             var bookingId = await HoldIdAsync(owner, seatIds[0]);
             var other = await _fixture.Api.CreateUserClientAsync();
             var admin = await _fixture.Api.CreateAdminClientAsync();
 
-            await ProblemAssert.HasCodeAsync(await other.GetAsync($"/api/Booking/{bookingId}"), HttpStatusCode.Forbidden, "not_hold_owner");
-            await ProblemAssert.HasCodeAsync(await admin.GetAsync($"/api/Booking/{bookingId}"), HttpStatusCode.Forbidden, "not_hold_owner");
+            await ProblemAssert.HasCodeAsync(await other.GetAsync($"/api/Booking/{bookingId}", ct), HttpStatusCode.Forbidden, "not_hold_owner");
+            await ProblemAssert.HasCodeAsync(await admin.GetAsync($"/api/Booking/{bookingId}", ct), HttpStatusCode.Forbidden, "not_hold_owner");
         }
 
         [Fact]
@@ -351,7 +353,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.GetAsync("/api/Booking/2147483647");
+            var response = await client.GetAsync("/api/Booking/2147483647", TestContext.Current.CancellationToken);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.NotFound, "booking_not_found");
         }
@@ -361,6 +363,7 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task StatusValues_ShouldBeCamelCase_InEveryBookingResponse()
         {
+            var ct = TestContext.Current.CancellationToken;
             var (_, seatIds) = await _fixture.CreateEventAsync(seats: 2);
             var client = await _fixture.Api.CreateUserClientAsync();
 
@@ -368,12 +371,12 @@ namespace SeatHive.Tests.Integration.Api
             var bookingId = hold.GetProperty("bookingId").GetInt32();
             Assert.Equal("held", hold.GetProperty("status").GetString());
 
-            var confirm = await (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null)).Content.ReadFromJsonAsync<JsonElement>();
+            var confirm = await (await client.PostAsync($"/api/Booking/{bookingId}/confirm", null, ct)).Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal("paymentPending", confirm.GetProperty("status").GetString());
             Assert.Equal("paymentPending", (await GetJsonAsync(client, $"/api/Booking/{bookingId}")).GetProperty("status").GetString());
 
             var releasedId = await HoldIdAsync(client, seatIds[1]);
-            var release = await (await client.PostAsync($"/api/Booking/{releasedId}/release", null)).Content.ReadFromJsonAsync<JsonElement>();
+            var release = await (await client.PostAsync($"/api/Booking/{releasedId}/release", null, ct)).Content.ReadFromJsonAsync<JsonElement>(cancellationToken: ct);
             Assert.Equal("released", release.GetProperty("status").GetString());
         }
 
@@ -391,15 +394,16 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Reads_ShouldReturn429_WhenTheirLimitIsExceeded()
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var api = new ApiFactory(_fixture, new Dictionary<string, string?> { ["RateLimiting__Read__PermitLimit"] = "3" });
             var client = api.CreateClient();
 
             for (var i = 0; i < 3; i++)
             {
-                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Events")).StatusCode);
+                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Events", ct)).StatusCode);
             }
 
-            var rejected = await client.GetAsync("/api/Events");
+            var rejected = await client.GetAsync("/api/Events", ct);
 
             await ProblemAssert.HasCodeAsync(rejected, HttpStatusCode.TooManyRequests, "rate_limited");
         }
@@ -407,16 +411,17 @@ namespace SeatHive.Tests.Integration.Api
         [Fact]
         public async Task Reads_ShouldNotUseUpTheBookingLimit()
         {
+            var ct = TestContext.Current.CancellationToken;
             await using var api = new ApiFactory(_fixture, new Dictionary<string, string?> { ["RateLimiting__Booking__PermitLimit"] = "3" });
             var client = await api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
 
             for (var i = 0; i < 5; i++)
             {
-                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Booking")).StatusCode);
+                Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/Booking", ct)).StatusCode);
             }
 
-            var hold = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
+            var hold = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId }, cancellationToken: ct);
 
             Assert.Equal(HttpStatusCode.OK, hold.StatusCode);
         }

@@ -59,7 +59,7 @@ namespace SeatHive.Tests.Integration
         // The API under test, wired to this fixture's databases. It starts when a test first uses it.
         public ApiFactory Api { get; private set; } = null!;
 
-        public async Task InitializeAsync()
+        public async ValueTask InitializeAsync()
         {
             await SharedContainers.StartAsync();
 
@@ -74,7 +74,7 @@ namespace SeatHive.Tests.Integration
             Api = new ApiFactory(this);
         }
 
-        public async Task DisposeAsync()
+        public async ValueTask DisposeAsync()
         {
             await Api.DisposeAsync();
             await Redis.DisposeAsync();

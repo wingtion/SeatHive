@@ -68,9 +68,10 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task Seat_ShouldBeUnique_PerEventSectionRowAndNumber()
         {
+            var ct = TestContext.Current.CancellationToken;
             var seatId = await _fixture.CreateFreeSeatAsync();
             await using var db = _fixture.CreateContext();
-            var existing = await db.Seats.AsNoTracking().SingleAsync(s => s.Id == seatId);
+            var existing = await db.Seats.AsNoTracking().SingleAsync(s => s.Id == seatId, cancellationToken: ct);
 
             db.Seats.Add(new Seat
             {
@@ -79,7 +80,7 @@ namespace SeatHive.Tests.Integration
                 Row = existing.Row,
                 SeatNumber = existing.SeatNumber
             });
-            var error = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync());
+            var error = await Assert.ThrowsAsync<DbUpdateException>(() => db.SaveChangesAsync(ct));
 
             var postgresError = Assert.IsType<PostgresException>(error.InnerException);
             Assert.Equal(PostgresErrorCodes.UniqueViolation, postgresError.SqlState);

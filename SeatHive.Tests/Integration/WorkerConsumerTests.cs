@@ -37,9 +37,9 @@ namespace SeatHive.Tests.Integration
 
             public ServiceProvider Services { get; private set; } = null!;
 
-            public async Task InitializeAsync() => Services = await StartWorkerAsync(_fixture, failureRate: 0);
+            public async ValueTask InitializeAsync() => Services = await StartWorkerAsync(_fixture, failureRate: 0);
 
-            public async Task DisposeAsync() => await Services.DisposeAsync();
+            public async ValueTask DisposeAsync() => await Services.DisposeAsync();
         }
 
         public WorkerConsumerTests(ContainersFixture fixture, DefaultWorker defaultWorker)
@@ -169,7 +169,7 @@ namespace SeatHive.Tests.Integration
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest();
 
-            await harness.Bus.Publish(request);
+            await harness.Bus.Publish(request, TestContext.Current.CancellationToken);
 
             var succeeded = await DeliveredAsync<PaymentSucceeded>(worker, request.BookingId, e => e.BookingId);
             Assert.Equal((request.SeatId, request.UserId, request.PaymentId), (succeeded.SeatId, succeeded.UserId, succeeded.PaymentId));
@@ -184,7 +184,7 @@ namespace SeatHive.Tests.Integration
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest(forceFailure: true);
 
-            await harness.Bus.Publish(request);
+            await harness.Bus.Publish(request, TestContext.Current.CancellationToken);
 
             var failed = await DeliveredAsync<PaymentFailed>(worker, request.BookingId, e => e.BookingId);
             Assert.Equal((request.SeatId, request.UserId, request.PaymentId), (failed.SeatId, failed.UserId, failed.PaymentId));
@@ -199,7 +199,7 @@ namespace SeatHive.Tests.Integration
             var harness = worker.GetRequiredService<ITestHarness>();
             var request = NewPaymentRequest();
 
-            await harness.Bus.Publish(request);
+            await harness.Bus.Publish(request, TestContext.Current.CancellationToken);
 
             await DeliveredAsync<PaymentFailed>(worker, request.BookingId, e => e.BookingId);
             Assert.Equal(0, Count<PaymentSucceeded>(worker, request.BookingId, e => e.BookingId));
@@ -208,6 +208,7 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task ProviderCall_ShouldRunWithoutAnOpenDatabaseTransaction()
         {
+            var ct = TestContext.Current.CancellationToken;
             // A database of its own, so every other session in it belongs to this Worker.
             var connectionString = _fixture.GetPostgresConnectionString("seathive_worker_tx");
             var clock = new GatedClock();
@@ -216,10 +217,10 @@ namespace SeatHive.Tests.Integration
             var request = NewPaymentRequest();
 
             var waiting = clock.NextWaitAsync();
-            await harness.Bus.Publish(request);
+            await harness.Bus.Publish(request, ct);
 
             // The payment is now "at the provider": the consumer waits on the clock, which does not move.
-            await waiting.WaitAsync(TimeSpan.FromSeconds(10));
+            await waiting.WaitAsync(TimeSpan.FromSeconds(10), ct);
             int openTransactions;
             try
             {
@@ -242,6 +243,7 @@ namespace SeatHive.Tests.Integration
         [InlineData(false)]
         public async Task SamePaymentRequestDeliveredTwice_ShouldChargeOnce_AndProduceOneResult(bool sameMessageId)
         {
+            var ct = TestContext.Current.CancellationToken;
             var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var calls = worker.GetRequiredService<ChargeCalls>();
@@ -250,8 +252,8 @@ namespace SeatHive.Tests.Integration
 
             // The same request arrives twice: redelivered by the broker (same message id)
             // or sent again by the publisher (a new message id).
-            await harness.Bus.Publish(request, context => context.MessageId = messageId);
-            await harness.Bus.Publish(request, context => context.MessageId = sameMessageId ? messageId : NewId.NextGuid());
+            await harness.Bus.Publish(request, context => context.MessageId = messageId, cancellationToken: ct);
+            await harness.Bus.Publish(request, context => context.MessageId = sameMessageId ? messageId : NewId.NextGuid(), cancellationToken: ct);
 
             await DeliveredAsync<PaymentSucceeded>(worker, request.BookingId, e => e.BookingId);
 
@@ -327,7 +329,7 @@ namespace SeatHive.Tests.Integration
             var bookingId = Interlocked.Increment(ref _nextBookingId);
             var paymentId = await ChargeAsync(worker);
 
-            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"));
+            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"), TestContext.Current.CancellationToken);
 
             var refunded = await DeliveredAsync<RefundCompleted>(worker, bookingId, e => e.BookingId);
             Assert.Equal((7, 9, paymentId), (refunded.SeatId, refunded.UserId, refunded.PaymentId));
@@ -369,7 +371,7 @@ namespace SeatHive.Tests.Integration
             // A payment the provider has never charged (or has forgotten).
             var paymentId = Guid.NewGuid();
 
-            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"));
+            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"), TestContext.Current.CancellationToken);
 
             var failed = await DeliveredAsync<RefundFailed>(worker, bookingId, e => e.BookingId);
             Assert.Equal((7, 9, paymentId, "charge_not_found"), (failed.SeatId, failed.UserId, failed.PaymentId, failed.Reason));
@@ -385,7 +387,7 @@ namespace SeatHive.Tests.Integration
             // The charge failed, so no money was taken and there is nothing to give back.
             var paymentId = await ChargeAsync(worker, forceFailure: true);
 
-            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"));
+            await harness.Bus.Publish(new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired"), TestContext.Current.CancellationToken);
 
             var failed = await DeliveredAsync<RefundFailed>(worker, bookingId, e => e.BookingId);
             Assert.Equal("charge_not_successful", failed.Reason);
@@ -397,18 +399,19 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task RefundRequestedAgain_AsANewMessage_ShouldNotRefundASecondTime()
         {
+            var ct = TestContext.Current.CancellationToken;
             var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var bookingId = Interlocked.Increment(ref _nextBookingId);
             var paymentId = await ChargeAsync(worker);
             var request = new RefundRequested(bookingId, 7, 9, DateTime.UtcNow, paymentId, "hold_expired");
 
-            await harness.Bus.Publish(request);
+            await harness.Bus.Publish(request, ct);
             await DeliveredAsync<RefundCompleted>(worker, bookingId, e => e.BookingId);
             var refundedAt = (await ReadChargeAsync(worker, paymentId)).RefundedAt;
 
             var secondMessageId = NewId.NextGuid();
-            await harness.Bus.Publish(request, context => context.MessageId = secondMessageId);
+            await harness.Bus.Publish(request, context => context.MessageId = secondMessageId, cancellationToken: ct);
             await ConsumedAsync(worker, secondMessageId);
 
             Assert.Equal(1, Count<RefundCompleted>(worker, bookingId, e => e.BookingId));
@@ -420,18 +423,19 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task PaymentOutcomeAgain_AsANewMessage_ShouldNotBeAnnouncedASecondTime()
         {
+            var ct = TestContext.Current.CancellationToken;
             var worker = _defaultWorker;
             var harness = worker.GetRequiredService<ITestHarness>();
             var bookingId = Interlocked.Increment(ref _nextBookingId);
             var paymentId = await ChargeAsync(worker);
             var outcome = new SeatHive.Worker.Messages.PaymentCharged(bookingId, 7, 9, paymentId, true, null);
 
-            await harness.Bus.Publish(outcome);
+            await harness.Bus.Publish(outcome, ct);
             await DeliveredAsync<PaymentSucceeded>(worker, bookingId, e => e.BookingId);
             Assert.NotNull((await ReadChargeAsync(worker, paymentId)).AnnouncedAt);
 
             var secondMessageId = NewId.NextGuid();
-            await harness.Bus.Publish(outcome, context => context.MessageId = secondMessageId);
+            await harness.Bus.Publish(outcome, context => context.MessageId = secondMessageId, cancellationToken: ct);
             await ConsumedAsync(worker, secondMessageId);
 
             Assert.Equal(1, Count<PaymentSucceeded>(worker, bookingId, e => e.BookingId));
@@ -444,7 +448,7 @@ namespace SeatHive.Tests.Integration
             var harness = worker.GetRequiredService<ITestHarness>();
             var bookingId = Interlocked.Increment(ref _nextBookingId);
 
-            await harness.Bus.Publish(new BookingConfirmed(bookingId, 7, 9, DateTime.UtcNow, Guid.NewGuid()));
+            await harness.Bus.Publish(new BookingConfirmed(bookingId, 7, 9, DateTime.UtcNow, Guid.NewGuid()), TestContext.Current.CancellationToken);
 
             var sent = await DeliveredAsync<NotificationSent>(worker, bookingId, e => e.BookingId);
             Assert.Equal((7, 9), (sent.SeatId, sent.UserId));
