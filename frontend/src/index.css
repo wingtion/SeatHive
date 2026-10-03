@@ -7,6 +7,7 @@
 
 /*
   Design tokens. One accent: amber, and it means one thing only: "held / locked".
+  Two signal colours beside it, each with one meaning too: green for "the live connection is up", red for a real failure.
   Contrast (WCAG) of each pair is noted where it matters; text needs 4.5:1, shapes and borders 3:1.
 */
 :root {
@@ -23,6 +24,8 @@
   --hold-ink: #15181d; /* text on the amber fill, 8.4:1 */
   --hold-text: #9a4d00; /* amber as text or border on the light theme, 5.6:1 on bg */
 
+  --live: #15803d; /* green, for one thing only: the live connection is up. 4.6:1 on bg */
+
   --danger: #b3261e; /* real failures only, 5.9:1 on bg. A lost race is not a failure. */
 }
 
@@ -38,6 +41,8 @@
     --hold: #f2a11b; /* 8.8:1 on bg */
     --hold-ink: #15181d;
     --hold-text: #f5b041; /* 10:1 on bg */
+
+    --live: #4ade80; /* 11:1 on bg */
 
     --danger: #ff8a80; /* 8.2:1 on bg */
   }
@@ -56,6 +61,7 @@
   --color-hold: var(--hold);
   --color-hold-ink: var(--hold-ink);
   --color-hold-text: var(--hold-text);
+  --color-live: var(--live);
   --color-danger: var(--danger);
 
   /* One corner scale: seats 2px, controls and panels 4px. Nothing is rounder. */
@@ -75,6 +81,8 @@
 @layer base {
   html {
     background: var(--bg);
+    /* The page keeps its width when a scrollbar comes or goes. */
+    scrollbar-gutter: stable;
     color: var(--ink);
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;

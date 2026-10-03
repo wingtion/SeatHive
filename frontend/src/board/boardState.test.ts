@@ -6,6 +6,7 @@ import {
   applyBookingEvent,
   applySeatChange,
   bookingsBySeat,
+  countSeats,
   formatRemaining,
   groupBySection,
   parseUtc,
@@ -136,5 +137,23 @@ describe('time', () => {
     [-5_000, '0:00'],
   ])('formats %i ms left as %s', (milliseconds, expected) => {
     expect(formatRemaining(milliseconds)).toBe(expected)
+  })
+})
+
+describe('countSeats', () => {
+  it('counts every seat once, the person\'s own apart from the others', () => {
+    const seats = [seat(1), seat(2, 'held'), seat(3, 'held'), seat(4, 'booked'), seat(5, 'booked'), seat(6)]
+    const mine = bookingsBySeat([booking(10, 3, 'held'), booking(11, 5, 'confirmed')])
+
+    const counts = countSeats(seats, mine)
+
+    expect(counts).toEqual({ available: 2, heldByOthers: 1, bookedByOthers: 1, yours: 2 })
+    expect(counts.available + counts.heldByOthers + counts.bookedByOthers + counts.yours).toBe(seats.length)
+  })
+
+  it('counts a seat of the person\'s own as theirs before the map has heard of the hold', () => {
+    const counts = countSeats([seat(1)], bookingsBySeat([booking(10, 1, 'held')]))
+
+    expect(counts).toEqual({ available: 0, heldByOthers: 0, bookedByOthers: 0, yours: 1 })
   })
 })

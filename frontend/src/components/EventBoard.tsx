@@ -1,8 +1,9 @@
-import { X } from '@phosphor-icons/react'
-import { useMemo } from 'react'
+import { ArrowDown, X } from '@phosphor-icons/react'
+import { useMemo, useState } from 'react'
+import type { Booking } from '../api/bookings'
 import type { Seat } from '../api/events'
 import { useAuth } from '../auth/context'
-import { activeBookings, bookingsBySeat, seatLabel, type SeatView } from '../board/boardState'
+import { activeBookings, bookingsBySeat, countSeats, seatLabel, type SeatView } from '../board/boardState'
 import { useEventBoard } from '../board/useEventBoard'
 import { useNow } from '../board/useNow'
 import type { LiveStatus } from '../live/seatHub'
@@ -16,11 +17,28 @@ const eventDate = new Intl.DateTimeFormat('en-GB', { dateStyle: 'full', timeStyl
 
 // The stage: the event, its seat map and the person's own seats, all of it what the API holds right now.
 export function EventBoard() {
-  const { session } = useAuth()
+  const { session, continueAsGuest } = useAuth()
   const board = useEventBoard()
   const mine = useMemo(() => bookingsBySeat(board.bookings), [board.bookings])
   const active = useMemo(() => activeBookings(board.bookings), [board.bookings])
   const now = useNow()
+  // Someone not signed in chose a seat: the map answers with the one thing that is needed.
+  const [askedToEnter, setAskedToEnter] = useState(false)
+  const [entering, setEntering] = useState(false)
+  const [enterError, setEnterError] = useState<string | null>(null)
+
+  async function enter() {
+    setEntering(true)
+    setEnterError(null)
+    try {
+      await continueAsGuest()
+      setAskedToEnter(false)
+    } catch {
+      setEnterError('Could not enter as a guest. Try again.')
+    } finally {
+      setEntering(false)
+    }
+  }
 
   if (board.load.kind === 'loading') return <Loading />
 
@@ -77,6 +95,15 @@ export function EventBoard() {
         <Live status={board.live} signedIn={session !== null} />
       </header>
 
+      {/* On a narrow screen the evidence is far below the map; this is the way to it. */}
+      <a
+        href="#hood-heading"
+        className="flex w-fit items-center gap-2 rounded-control text-sm font-medium underline decoration-line-strong underline-offset-4 hover:decoration-ink lg:hidden"
+      >
+        <ArrowDown size={16} weight="bold" aria-hidden />
+        Under the hood: race, holds, events
+      </a>
+
       <div className="grid gap-10 lg:grid-cols-[minmax(0,27rem)_minmax(0,1fr)] lg:gap-16">
         {/* The stage: the booking itself. */}
         <div className="flex flex-col gap-10">
@@ -84,7 +111,16 @@ export function EventBoard() {
             <h2 id="seats-heading" className="sr-only">
               Seats
             </h2>
-            <Legend seats={board.seats} mine={active.length} />
+            <Legend seats={board.seats} mine={mine} />
+
+            {session === null && askedToEnter && (
+              <div role="status" className="flex flex-wrap items-center gap-x-4 gap-y-2 border-l-2 border-ink pl-3 text-sm">
+                <p>{enterError ?? 'Enter as a guest to hold a seat. It takes one click and no account.'}</p>
+                <Button variant="primary" disabled={entering} onClick={() => void enter()}>
+                  {entering ? 'Entering' : 'Continue as guest'}
+                </Button>
+              </div>
+            )}
 
             {board.seatError && (
               <p role="alert" className="border-l-2 border-ink pl-3 text-sm">
@@ -98,6 +134,7 @@ export function EventBoard() {
               mine={mine}
               busySeats={board.busySeats}
               canHold={session !== null}
+              onNeedsSignIn={() => setAskedToEnter(true)}
               onHold={(seatId) => void board.hold(seatId)}
             />
           </section>
@@ -122,14 +159,17 @@ export function EventBoard() {
   )
 }
 
-// How the seats stand, with the mark each kind carries on the map.
-function Legend({ seats, mine }: { seats: Seat[]; mine: number }) {
-  const count = (status: Seat['status']) => seats.filter((seat) => seat.status === status).length
+// How the seats stand, with the mark each kind carries on the map. The person's own seats are counted apart,
+// so "Held" and "Booked" are the seats of others, as their marks say, and the four numbers add up.
+function Legend({ seats, mine }: { seats: Seat[]; mine: Map<number, Booking> }) {
+  const counts = countSeats(seats, mine)
+  // The mark of "Yours" is the one on the map: amber while a seat is still held, booked once all are paid for.
+  const holding = [...mine.values()].some((booking) => booking.status !== 'confirmed')
   const entries: { view: SeatView; label: string; value: number }[] = [
-    { view: 'available', label: 'Available', value: count('available') },
-    { view: 'heldByOther', label: 'Held', value: count('held') },
-    { view: 'booked', label: 'Booked', value: count('booked') },
-    { view: 'mineHeld', label: 'Yours', value: mine },
+    { view: 'available', label: 'Available', value: counts.available },
+    { view: 'heldByOther', label: 'Held', value: counts.heldByOthers },
+    { view: 'booked', label: 'Booked', value: counts.bookedByOthers },
+    { view: holding || mine.size === 0 ? 'mineHeld' : 'mineBooked', label: 'Yours', value: counts.yours },
   ]
 
   return (
@@ -158,8 +198,9 @@ const liveText: Record<LiveStatus, string> = {
 function Live({ status, signedIn }: { status: LiveStatus; signedIn: boolean }) {
   return (
     <p className="flex items-center gap-2 text-sm text-ink-muted" role="status">
-      <span aria-hidden className={`size-2 rounded-full ${status === 'live' ? 'bg-hold' : 'border border-line-strong'}`} />
-      <span className={status === 'live' ? 'font-medium text-ink' : ''}>{liveText[status]}</span>
+      {/* Green, and only here: it says the connection is up. Not live is an empty ring, so colour is not the only cue. */}
+      <span aria-hidden className={`size-2 rounded-full ${status === 'live' ? 'bg-live' : 'border border-line-strong'}`} />
+      <span className={status === 'live' ? 'font-medium text-live' : ''}>{liveText[status]}</span>
       {!signedIn && <span>(a snapshot; enter as a guest for live updates)</span>}
     </p>
   )

@@ -21,7 +21,7 @@ export function HoldsList({ holds, now }: { holds: HoldNow[]; now: number }) {
           Holds running out
         </h3>
         <p className="max-w-[65ch] text-sm text-ink-muted">
-          A hold ends by itself. The API frees the seat within five seconds of the time shown, with no request from anyone.
+          A hold ends by itself: the API frees the seat within five seconds of the time shown.
         </p>
       </div>
 

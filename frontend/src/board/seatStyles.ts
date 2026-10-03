@@ -8,5 +8,6 @@ export const seatStyles: Record<SeatView, string> = {
   mineHeld: 'border border-hold-text bg-hold font-semibold text-hold-ink',
   minePaying: 'border border-hold-text bg-hold font-semibold text-hold-ink',
   booked: 'bg-ink text-bg',
-  mineBooked: 'bg-ink text-bg shadow-[inset_0_0_0_2px_var(--hold)]',
+  // The amber frame is what says "yours" on a booked seat, so it is thick enough to be seen at the size of the legend.
+  mineBooked: 'bg-ink font-semibold text-bg shadow-[inset_0_0_0_2.5px_var(--hold)]',
 }

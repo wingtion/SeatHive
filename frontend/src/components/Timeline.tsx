@@ -47,8 +47,7 @@ export function Timeline({ token, bookings, liveEvents, resyncs }: TimelineProps
           What happened to your booking
         </h3>
         <p className="max-w-[65ch] text-sm text-ink-muted">
-          Each line is a message that went through the outbox and RabbitMQ. Payments and notifications are simulated by a
-          separate worker.
+          Each line is a message that went through RabbitMQ. A separate worker simulates payments and notifications.
         </p>
       </div>
 
@@ -97,7 +96,7 @@ export function Timeline({ token, bookings, liveEvents, resyncs }: TimelineProps
               history.status === 'ready' && <p className="text-sm text-ink-muted">Nothing recorded yet. The first event is about a second away.</p>
             )
           ) : (
-            <ol className="flex flex-col gap-2.5" aria-live="polite">
+            <ol className="flex max-w-xl flex-col gap-2.5" aria-live="polite">
               {entries.map((entry, index) => {
                 const before = entries[index - 1]
                 return (

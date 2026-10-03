@@ -1,12 +1,13 @@
 import { useId, useState, type FormEvent } from 'react'
 import type { Seat } from '../api/events'
-import { DEFAULT_RACERS, MAX_RACERS, MIN_RACERS, type RaceReport } from '../api/simulation'
+import { DEFAULT_RACERS, MAX_RACERS, MIN_RACERS, type RaceAttempt, type RaceReport } from '../api/simulation'
 import { formatRemaining, parseUtc, seatLabel } from '../board/boardState'
 import { attemptKind, countAttempts, type AttemptKind } from '../hood/hoodState'
 import { Button } from './Button'
 
-// How a racer is drawn. The winner is the amber of a held seat, because it holds one. The others differ in
-// border and fill, not in colour: turned away at the lock is a plain outline, refused by the database is dashed.
+// How a racer is drawn: a tag, wider than it is high, so it is never taken for a seat of the map. The winner is
+// the amber of a held seat, because it holds one. The others differ in border and fill, not in colour: turned
+// away at the lock is a plain outline, refused by the database is dashed.
 const racerStyles: Record<AttemptKind, string> = {
   won: 'border border-hold-text bg-hold font-semibold text-hold-ink',
   lock: 'border border-line-strong text-ink-muted',
@@ -16,7 +17,7 @@ const racerStyles: Record<AttemptKind, string> = {
 
 const kindNames: Record<AttemptKind, string> = {
   won: 'got the seat',
-  lock: 'turned away at the lock',
+  lock: 'stopped at the lock',
   database: 'refused by the database',
   failed: 'failed',
 }
@@ -50,7 +51,7 @@ export function RacePanel({ signedIn, seats, race, running, error, now, onStart 
           Race for one seat
         </h3>
         <p className="max-w-[65ch] text-sm text-ink-muted">
-          Racers ask for the first free seat at the same moment, through the same code as your own hold. One may get it.
+          Every racer asks for the first free seat at the same moment, through the same code as your own hold.
         </p>
       </div>
 
@@ -108,18 +109,17 @@ function RaceResult({ race, seats, now }: { race: RaceReport; seats: Seat[]; now
   const seat = seats.find((candidate) => candidate.seatId === race.seatId)
   const label = seat ? seatLabel(seat) : `seat ${race.seatId}`
   const counts = countAttempts(race.attempts)
-  const figures: { kind: AttemptKind; label: string }[] = [
-    { kind: 'won', label: 'Got the seat' },
-    { kind: 'lock', label: 'Stopped at the lock' },
-    { kind: 'database', label: 'Refused by the database' },
-  ]
-  if (counts.failed > 0) figures.push({ kind: 'failed', label: 'Failed' })
+  const kinds: AttemptKind[] = counts.failed > 0 ? ['won', 'lock', 'database', 'failed'] : ['won', 'lock', 'database']
 
   return (
-    <div className="flex flex-col gap-4" aria-live="polite">
-      <p className="text-base">
-        <span className="font-semibold">{label}</span>: {race.winners} of {race.racers} got the seat, in{' '}
-        <span className="font-mono tabular-nums">{race.durationMs}</span> ms.
+    <div className="flex flex-col gap-4">
+      {/* The result in one sentence, the count of winners large: that number is the claim. */}
+      <p className="flex flex-wrap items-baseline gap-x-3 gap-y-1" aria-live="polite">
+        <span className="font-mono text-5xl leading-none font-medium tabular-nums">{race.winners}</span>
+        <span className="text-base">
+          of {race.racers} racers got seat <span className="font-semibold">{label}</span>, in{' '}
+          <span className="font-mono tabular-nums">{race.durationMs}</span> ms
+        </span>
       </p>
 
       {race.winners > 1 && (
@@ -128,32 +128,36 @@ function RaceResult({ race, seats, now }: { race: RaceReport; seats: Seat[]; now
         </p>
       )}
 
-      <ul className="grid max-w-[27rem] grid-cols-10 gap-1.5" aria-label="Racers">
-        {race.attempts.map((attempt) => {
-          const kind = attemptKind(attempt)
-          return (
-            <li
-              key={attempt.racer}
-              aria-label={`Racer ${attempt.racer}, ${kindNames[kind]}`}
-              className={`flex aspect-square items-center justify-center rounded-seat font-mono text-xs tabular-nums ${racerStyles[kind]}`}
-            >
-              {attempt.racer}
-            </li>
-          )
-        })}
-      </ul>
+      <div className="flex flex-col gap-2">
+        <p id="racers-caption" className="text-sm text-ink-muted">
+          The racers, by number:
+        </p>
+        <ul className="flex max-w-xl flex-wrap gap-1.5" aria-labelledby="racers-caption">
+          {race.attempts.map((attempt) => {
+            const kind = attemptKind(attempt)
+            return (
+              <li
+                key={attempt.racer}
+                className={`flex h-6 min-w-9 items-center justify-center rounded-seat px-1.5 font-mono text-xs tabular-nums ${racerStyles[kind]}`}
+              >
+                <span className="sr-only">Racer </span>
+                {attempt.racer}
+                <span className="sr-only">, {kindNames[kind]}</span>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
 
-      <dl className="flex flex-wrap gap-x-8 gap-y-3 border-y border-line py-3">
-        {figures.map((figure) => (
-          <div key={figure.kind} className="flex flex-col gap-1">
-            <dt className="flex items-center gap-2 text-sm text-ink-muted">
-              <span aria-hidden className={`size-3 shrink-0 rounded-seat ${racerStyles[figure.kind]}`} />
-              {figure.label}
-            </dt>
-            <dd className="font-mono text-xl font-medium tabular-nums">{counts[figure.kind]}</dd>
-          </div>
+      <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        {kinds.map((kind) => (
+          <li key={kind} className="flex items-center gap-2">
+            <span aria-hidden className={`h-3 w-4.5 shrink-0 rounded-seat ${racerStyles[kind]}`} />
+            <span className="font-mono font-medium tabular-nums">{counts[kind]}</span>
+            <span className="text-ink-muted">{kindNames[kind]}</span>
+          </li>
         ))}
-      </dl>
+      </ul>
 
       <Winner race={race} label={label} now={now} />
 
@@ -161,27 +165,27 @@ function RaceResult({ race, seats, now }: { race: RaceReport; seats: Seat[]; now
         <summary className="w-fit cursor-pointer rounded-control font-medium underline decoration-line-strong underline-offset-4 hover:decoration-ink">
           Every attempt
         </summary>
-        <div className="mt-3 max-h-72 overflow-auto" tabIndex={0} role="region" aria-label="Every attempt of the race">
-          <table className="w-full min-w-[26rem] border-collapse font-mono text-xs tabular-nums">
+        <div className="mt-3 max-h-72 max-w-xl overflow-auto" tabIndex={0} role="region" aria-label="Every attempt of the race">
+          <table className="w-full border-collapse font-mono text-xs tabular-nums">
             <thead className="sticky top-0 bg-bg text-left font-sans text-ink-muted">
               <tr>
-                <th scope="col" className="py-1.5 pr-4 font-medium">Racer</th>
-                <th scope="col" className="py-1.5 pr-4 font-medium">Result</th>
-                <th scope="col" className="py-1.5 pr-4 font-medium">Lock</th>
-                <th scope="col" className="py-1.5 pr-4 font-medium">Code</th>
-                <th scope="col" className="py-1.5 pr-4 text-right font-medium">From</th>
-                <th scope="col" className="py-1.5 text-right font-medium">To</th>
+                <th scope="col" className="py-1.5 pr-3 font-medium">Racer</th>
+                <th scope="col" className="py-1.5 pr-3 font-medium">Result</th>
+                <th scope="col" className="py-1.5 pr-3 font-medium">Lock</th>
+                <th scope="col" className="py-1.5 pr-3 font-medium">Code</th>
+                <th scope="col" className="py-1.5 pr-3 text-right font-medium">From (ms)</th>
+                <th scope="col" className="py-1.5 text-right font-medium">To (ms)</th>
               </tr>
             </thead>
             <tbody>
-              {race.attempts.map((attempt) => (
+              {winnerFirst(race.attempts).map((attempt) => (
                 <tr key={attempt.racer} className={attempt.outcome === 'won' ? 'font-semibold text-hold-text' : ''}>
-                  <td className="py-1 pr-4">{attempt.racer}</td>
-                  <td className="py-1 pr-4">{attempt.outcome}</td>
-                  <td className="py-1 pr-4">{attempt.lock ?? 'none'}</td>
-                  <td className="py-1 pr-4">{attempt.code ?? ''}</td>
-                  <td className="py-1 pr-4 text-right">{attempt.startedAtMs} ms</td>
-                  <td className="py-1 text-right">{attempt.finishedAtMs} ms</td>
+                  <td className="py-1 pr-3">{attempt.racer}</td>
+                  <td className="py-1 pr-3">{attempt.outcome}</td>
+                  <td className="py-1 pr-3">{attempt.lock ?? 'none'}</td>
+                  <td className="py-1 pr-3">{attempt.code ?? ''}</td>
+                  <td className="py-1 pr-3 text-right">{attempt.startedAtMs}</td>
+                  <td className="py-1 text-right">{attempt.finishedAtMs}</td>
                 </tr>
               ))}
             </tbody>
@@ -190,6 +194,11 @@ function RaceResult({ race, seats, now }: { race: RaceReport; seats: Seat[]; now
       </details>
     </div>
   )
+}
+
+// The winner on top, the others in the order of the report: the row looked for first is never below the fold.
+function winnerFirst(attempts: RaceAttempt[]): RaceAttempt[] {
+  return [...attempts.filter((a) => a.outcome === 'won'), ...attempts.filter((a) => a.outcome !== 'won')]
 }
 
 // The winner keeps the seat for a few seconds so the hold can be seen, then releases it like anyone would.

@@ -37,6 +37,26 @@ export function seatView(seat: Seat, mine: Booking | undefined): SeatView {
   return seat.status === 'held' ? 'heldByOther' : 'booked'
 }
 
+// How many seats there are of each kind the legend shows. Every seat is counted once: a seat of the person's own
+// is "yours" and not also "held" or "booked", so the four numbers add up to the seats of the event.
+export interface SeatCounts {
+  available: number
+  heldByOthers: number
+  bookedByOthers: number
+  yours: number
+}
+
+export function countSeats(seats: Seat[], mine: Map<number, Booking>): SeatCounts {
+  const counts: SeatCounts = { available: 0, heldByOthers: 0, bookedByOthers: 0, yours: 0 }
+  for (const seat of seats) {
+    if (mine.has(seat.seatId)) counts.yours += 1
+    else if (seat.status === 'available') counts.available += 1
+    else if (seat.status === 'held') counts.heldByOthers += 1
+    else counts.bookedByOthers += 1
+  }
+  return counts
+}
+
 // What an event of a booking (the hub's bookingEvent) means for its status. The event is the fact: reading the
 // booking again at that moment can still show the old status, because the API announces an event to the client
 // and changes the booking from the same message, in no fixed order. Events that leave the status alone are not here.

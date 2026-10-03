@@ -1,3 +1,4 @@
+import { GithubLogo } from '@phosphor-icons/react'
 import { useState } from 'react'
 import { ApiError, NETWORK_ERROR } from '../api/client'
 import { useAuth } from '../auth/context'
@@ -34,6 +35,7 @@ export function Header() {
 
         {session ? (
           <div className="flex items-center gap-4">
+            <SourceLink />
             <p className="flex min-w-0 items-center gap-2 text-sm">
               <span className="truncate">
                 {displayName(session)}
@@ -51,6 +53,7 @@ export function Header() {
                 {guestError}
               </p>
             )}
+            <SourceLink />
             <Button onClick={() => setSignInOpen(true)}>Sign in</Button>
             <Button variant="primary" onClick={enterAsGuest} disabled={enteringAsGuest}>
               {enteringAsGuest ? 'Entering' : 'Continue as guest'}
@@ -61,6 +64,21 @@ export function Header() {
 
       <SignInDialog open={signInOpen} onClose={() => setSignInOpen(false)} />
     </header>
+  )
+}
+
+// Where the claims on this page can be checked: the code.
+function SourceLink() {
+  return (
+    <a
+      href="https://github.com/wingtion/SeatHive"
+      target="_blank"
+      rel="noreferrer"
+      className="flex items-center gap-1.5 rounded-control text-sm text-ink underline decoration-line-strong underline-offset-4 hover:decoration-ink"
+    >
+      <GithubLogo size={16} weight="bold" aria-hidden />
+      Source
+    </a>
   )
 }
 

@@ -311,7 +311,8 @@ export function useEventBoard(): EventBoard {
     lastEvents,
     liveEvents,
     resyncs,
-    race,
+    // A report is for someone watching; after signing out it would stand there with no way to run another.
+    race: token !== null ? race : null,
     raceRunning,
     raceError,
     startRace,

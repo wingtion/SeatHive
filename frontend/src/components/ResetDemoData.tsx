@@ -19,7 +19,7 @@ export function ResetDemoData({ onReset }: { onReset: () => Promise<string | nul
           Demo data
         </h3>
         <p className="max-w-[65ch] text-sm text-ink-muted">
-          Shown to admins only. The same reset runs by itself once a night.
+          Admins only. The same reset runs by itself once a night.
         </p>
       </div>
 
@@ -33,11 +33,12 @@ export function ResetDemoData({ onReset }: { onReset: () => Promise<string | nul
             This deletes every booking and frees every seat, for everyone who is watching. It cannot be undone.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" disabled={step === 'resetting'} onClick={() => void reset()}>
-              {step === 'resetting' ? 'Resetting' : 'Delete and reset'}
-            </Button>
-            <Button autoFocus disabled={step === 'resetting'} onClick={() => setStep('idle')}>
+            {/* The safe answer is the emphasised one; deleting is never the button that looks like "go on". */}
+            <Button variant="primary" autoFocus disabled={step === 'resetting'} onClick={() => setStep('idle')}>
               Keep the data
+            </Button>
+            <Button disabled={step === 'resetting'} onClick={() => void reset()}>
+              {step === 'resetting' ? 'Resetting' : 'Delete and reset'}
             </Button>
           </div>
         </div>

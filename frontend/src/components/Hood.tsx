@@ -19,9 +19,15 @@ interface HoodProps {
 export function Hood({ board, session, mine, now }: HoodProps) {
   return (
     <section aria-labelledby="hood-heading" className="flex flex-col gap-8">
-      <h2 id="hood-heading" className="text-2xl font-semibold tracking-tight">
-        Under the hood
-      </h2>
+      <div className="flex flex-col gap-2">
+        <h2 id="hood-heading" className="scroll-mt-6 text-2xl font-semibold tracking-tight">
+          Under the hood
+        </h2>
+        <p className="max-w-[65ch] text-ink-muted">
+          Many people ask for one seat at the same moment, and exactly one gets it. Start a race to watch that happen, then
+          hold and confirm a seat to follow what comes after.
+        </p>
+      </div>
 
       <RacePanel
         signedIn={session !== null}

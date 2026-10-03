@@ -19,7 +19,7 @@ interface MySeatsProps {
 export function MySeats({ signedIn, bookings, now, busyBookings, errors, lastEvents, onConfirm, onRelease }: MySeatsProps) {
   return (
     <section aria-labelledby="my-seats-heading" className="flex flex-col gap-4">
-      <h2 id="my-seats-heading" className="text-lg font-semibold">
+      <h2 id="my-seats-heading" tabIndex={-1} className="scroll-mt-6 text-lg font-semibold">
         Your seats
       </h2>
 
@@ -116,10 +116,11 @@ function Status({ booking, remaining }: { booking: Booking; remaining: number })
 
   return (
     <p className="text-sm text-hold-text">
-      Held for{' '}
+      Held,{' '}
       <span className="font-mono font-medium tabular-nums" aria-live="off">
         {formatRemaining(remaining)}
-      </span>
+      </span>{' '}
+      left
     </p>
   )
 }
