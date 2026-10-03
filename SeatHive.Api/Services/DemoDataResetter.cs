@@ -78,7 +78,7 @@ namespace SeatHive.Api.Services
             // 2. Create Event
             var concert = new Event
             {
-                Name = "Tarkan - Harbiye Open Air",
+                Name = "Open Air Concert",
                 Date = DateTime.UtcNow.AddDays(30)
             };
             _context.Events.Add(concert);
