@@ -160,29 +160,8 @@ namespace SeatHive.Api.Controllers
 
         private ObjectResult ToProblem(BookingError? error)
         {
-            return error switch
-            {
-                BookingError.SeatNotFound =>
-                    this.ProblemWithCode(StatusCodes.Status404NotFound, ErrorCodes.SeatNotFound, "Seat not found."),
-                BookingError.SeatLocked =>
-                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.SeatLocked, "Someone else is booking this seat right now."),
-                BookingError.SeatHeld =>
-                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.SeatHeld, "Seat is held by another user."),
-                BookingError.HoldLimitReached =>
-                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.HoldLimitReached, "You are holding the maximum number of seats."),
-                BookingError.HoldExpired =>
-                    this.ProblemWithCode(StatusCodes.Status410Gone, ErrorCodes.HoldExpired, "The hold has expired."),
-                BookingError.HoldNotActive =>
-                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.HoldNotActive, "The booking is no longer an active hold."),
-                BookingError.PaymentInProgress =>
-                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.PaymentInProgress, "The payment for this booking is being processed."),
-                BookingError.BookingNotFound =>
-                    this.ProblemWithCode(StatusCodes.Status404NotFound, ErrorCodes.BookingNotFound, "Booking not found."),
-                BookingError.NotHoldOwner =>
-                    this.ProblemWithCode(StatusCodes.Status403Forbidden, ErrorCodes.NotHoldOwner, "The booking belongs to another user."),
-                _ =>
-                    this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.SeatAlreadyBooked, "Seat is already booked.")
-            };
+            var (status, code, title) = ErrorCodes.Describe(error);
+            return this.ProblemWithCode(status, code, title);
         }
     }
 }

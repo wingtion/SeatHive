@@ -14,6 +14,7 @@ namespace SeatHive.Api.Hubs
     //   seatStatusChanged  to everyone watching an event (JoinEvent): a seat of that event changed.
     //   bookingEvent       to the owner of a booking, on all their connections: something happened to it.
     //   demoDataReset      to everyone: all events, seats and bookings were replaced; read them again.
+    //   raceFinished       to everyone watching an event: a race of the simulation on one of its seats is over.
     //
     // None of it is sent from the request that made the change. Every message starts as an event in the outbox
     // and is sent when that event arrives over the bus (see the consumers), so a change that was rolled back
@@ -26,6 +27,7 @@ namespace SeatHive.Api.Hubs
         public const string SeatStatusChanged = "seatStatusChanged";
         public const string BookingEvent = "bookingEvent";
         public const string DemoDataReset = "demoDataReset";
+        public const string RaceFinished = "raceFinished";
 
         private readonly AppDbContext _context;
 

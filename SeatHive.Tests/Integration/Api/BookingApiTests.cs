@@ -420,23 +420,6 @@ namespace SeatHive.Tests.Integration.Api
         }
 
         [Fact]
-        public async Task Simulation_ShouldReportExactlyOneWinner()
-        {
-            var admin = await _fixture.Api.CreateAdminClientAsync();
-            // The simulation targets seat #1, which the reset recreates free.
-            (await admin.PostAsync("/api/Setup/create-data", null)).EnsureSuccessStatusCode();
-
-            var response = await admin.PostAsync("/api/Simulation/simulate-concurrency", null);
-
-            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-            var body = await response.Content.ReadFromJsonAsync<JsonElement>();
-            Assert.Equal(20, body.GetProperty("totalRequests").GetInt32());
-            Assert.Equal(1, body.GetProperty("successfulBookings").GetInt32());
-            Assert.Equal(19, body.GetProperty("failedBookings").GetInt32());
-            Assert.Equal(1, await CountBookingsAsync(1, "Held"));
-        }
-
-        [Fact]
         public async Task Register_ShouldReturn409WithCode_ForDuplicateEmail()
         {
             var client = _fixture.Api.CreateClient();

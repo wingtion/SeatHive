@@ -67,6 +67,13 @@ Projenin ana iddiası olan "20 istekten yalnızca 1'i başarılı olur" kodda ga
 - Yer: `SeatHive.Api/Controllers/SimulationController.cs:8-9, 18-41`
 - Sorun: Yetki ve rate limit yok; koltuk #1 ve 20 kullanıcı sabit; HTTP ve JWT katmanından geçmiyor; var olmayan kullanıcı kimlikleri (1001–1020) ile gerçek koltuğu kalıcı olarak rezerve ediyor. İkinci çalıştırmada 0 başarı döner ve yine "System is safe." der (`:53-55`).
 - Çözüm: Bölüm 7'ye bakın.
+- Kapandı (adım 5e). Eski simülasyonun 20 denemesi aynı admin ile yapıldığı için kullanıcı satırındaki `FOR UPDATE` onları sıraya diziyordu; yani "20 kişi yarışıyor" iddiası sınanmıyordu. Şimdi:
+  - Giriş yapmış her kullanıcı yarış başlatabilir; kullanıcı başına 5/dk limit var ve aynı anda tek yarış çalışır.
+  - Her yarışçı ayrı bir kullanıcıdır (50 `Racer` hesabı; giriş yapılamaz, kayıt reddedilir) ve kendi scope'unda çalışır. Hepsi bir başlangıç kapısında bekleyip aynı anda gerçek `HoldSeatAsync`'i çağırır.
+  - Cevap her denemeyi raporlar: sonuç, kod, kilit durumu (hold içinde ölçülür) ve süre. Aynı rapor outbox → bus → hub yoluyla `raceFinished` olarak yayınlanır.
+  - Kazanan 10 sn tutar (`Simulation:WinnerHoldSeconds`), sonra gerçek release yoluyla bırakılır. Bu arada aynı koltukta yarış `seat_held_by_race` ile reddedilir; bırakma kaybolursa TTL devreye girer.
+  - Testler: 20 test, yarış testleri 5 kez tekrarlandı. Docker smoke testinde 1 kazanan ve 19 `seat_locked/busy`; bırakma çalıştı; Redis kapalıyken 19 `seat_held/unavailable`.
+  - Yan bulgu (açık): Redis kapalıyken veritabanının reddettiği her hold (unique index, 23505), kod tarafından doğru şekilde `seat_held` olarak ele alınsa da EF Core tarafından `fail` seviyesinde loglanıyor.
 
 **Y4. Şema hiç migrate edilmiyor**
 - Yer: `SeatHive.Api/Program.cs` (`Migrate()` yok), `SetupController.cs:21`, `Migrations/20260215132940_AddUsersTable.cs`

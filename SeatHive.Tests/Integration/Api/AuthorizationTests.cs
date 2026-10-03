@@ -13,7 +13,6 @@ namespace SeatHive.Tests.Integration.Api
     public class AuthorizationTests
     {
         private const string ResetUrl = "/api/Setup/create-data";
-        private const string SimulationUrl = "/api/Simulation/simulate-concurrency";
 
         private readonly ContainersFixture _fixture;
 
@@ -22,9 +21,9 @@ namespace SeatHive.Tests.Integration.Api
             _fixture = fixture;
         }
 
+        // The race simulation is open to every signed-in user; see SimulationTests.
         [Theory]
         [InlineData(ResetUrl)]
-        [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn401_ForAnonymous(string url)
         {
             var client = _fixture.Api.CreateClient();
@@ -36,7 +35,6 @@ namespace SeatHive.Tests.Integration.Api
 
         [Theory]
         [InlineData(ResetUrl)]
-        [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn403_ForNormalUser(string url)
         {
             var client = await _fixture.Api.SignInAsUserAsync();
@@ -48,7 +46,6 @@ namespace SeatHive.Tests.Integration.Api
 
         [Theory]
         [InlineData(ResetUrl)]
-        [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn200_ForAdmin(string url)
         {
             var client = await _fixture.Api.SignInAsAdminAsync();

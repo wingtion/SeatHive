@@ -22,6 +22,14 @@ namespace SeatHive.Api.Services
         public const string EmailAlreadyRegistered = "email_already_registered";
         public const string InvalidCredentials = "invalid_credentials";
 
+        // The race simulation.
+        // The winner of an earlier race still holds the seat; the body says when it lets go ("releasesAt").
+        public const string SeatHeldByRace = "seat_held_by_race";
+        // Another race is running; one runs at a time.
+        public const string RaceInProgress = "race_in_progress";
+        // Too few racers are free: the others still hold seats they won.
+        public const string RacersBusy = "racers_busy";
+
         // For responses that are produced outside a controller: no or a bad token, the wrong role, a rate limit,
         // an unexpected error.
         public const string Unauthorized = "unauthorized";
@@ -37,6 +45,21 @@ namespace SeatHive.Api.Services
             StatusCodes.Status429TooManyRequests => RateLimited,
             StatusCodes.Status500InternalServerError => InternalError,
             _ => null
+        };
+
+        // How a booking error is answered: its status code, its code and a title for people.
+        public static (int Status, string Code, string Title) Describe(BookingError? error) => error switch
+        {
+            BookingError.SeatNotFound => (StatusCodes.Status404NotFound, SeatNotFound, "Seat not found."),
+            BookingError.SeatLocked => (StatusCodes.Status409Conflict, SeatLocked, "Someone else is booking this seat right now."),
+            BookingError.SeatHeld => (StatusCodes.Status409Conflict, SeatHeld, "Seat is held by another user."),
+            BookingError.HoldLimitReached => (StatusCodes.Status409Conflict, HoldLimitReached, "You are holding the maximum number of seats."),
+            BookingError.HoldExpired => (StatusCodes.Status410Gone, HoldExpired, "The hold has expired."),
+            BookingError.HoldNotActive => (StatusCodes.Status409Conflict, HoldNotActive, "The booking is no longer an active hold."),
+            BookingError.PaymentInProgress => (StatusCodes.Status409Conflict, PaymentInProgress, "The payment for this booking is being processed."),
+            BookingError.BookingNotFound => (StatusCodes.Status404NotFound, BookingNotFound, "Booking not found."),
+            BookingError.NotHoldOwner => (StatusCodes.Status403Forbidden, NotHoldOwner, "The booking belongs to another user."),
+            _ => (StatusCodes.Status409Conflict, SeatAlreadyBooked, "Seat is already booked.")
         };
     }
 

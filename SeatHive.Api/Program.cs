@@ -84,6 +84,7 @@ builder.Services.AddMassTransit(x =>
     // Live updates: what the hub sends starts here, when an event arrives from the bus, never in the request.
     x.AddConsumer<SeatStatusBroadcaster, SeatStatusBroadcasterDefinition>();
     x.AddConsumer<BookingLiveNotifier, BookingLiveNotifierDefinition>();
+    x.AddConsumer<RaceBroadcaster, RaceBroadcasterDefinition>();
 
     x.AddBookingOutbox(builder.Configuration);
 
@@ -140,6 +141,12 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.Configure<HoldOptions>(builder.Configuration.GetSection(HoldOptions.SectionName));
 builder.Services.AddHostedService<HoldExpirySweeper>();
 
+// The race simulation. The releaser gives up each winner's seat after Simulation:WinnerHoldSeconds.
+builder.Services.Configure<SimulationOptions>(builder.Configuration.GetSection(SimulationOptions.SectionName));
+builder.Services.AddSingleton<RaceWinnerReleaser>();
+builder.Services.AddHostedService(provider => provider.GetRequiredService<RaceWinnerReleaser>());
+builder.Services.AddSingleton<RaceSimulator>();
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -180,6 +187,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 var authPermitLimit = builder.Configuration.GetValue("RateLimiting:Auth:PermitLimit", 10);
 var bookingPermitLimit = builder.Configuration.GetValue("RateLimiting:Booking:PermitLimit", 30);
 var readPermitLimit = builder.Configuration.GetValue("RateLimiting:Read:PermitLimit", 120);
+var simulationPermitLimit = builder.Configuration.GetValue("RateLimiting:Simulation:PermitLimit", 5);
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -200,6 +208,12 @@ builder.Services.AddRateLimiter(options =>
         RateLimitPartition.GetFixedWindowLimiter(
             httpContext.User.FindFirst("sub")?.Value ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions { PermitLimit = readPermitLimit, Window = TimeSpan.FromMinutes(1) }));
+
+    // A race takes a database connection per racer; on top of this only one runs at a time (RaceSimulator).
+    options.AddPolicy(RateLimitPolicies.Simulation, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.User.FindFirst("sub")?.Value ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = simulationPermitLimit, Window = TimeSpan.FromMinutes(1) }));
 });
 
 var app = builder.Build();

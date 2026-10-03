@@ -1,67 +1,41 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using SeatHive.Api.Services; // Ensure this namespace matches yours
+using Microsoft.AspNetCore.Mvc.ModelBinding;
+using Microsoft.AspNetCore.RateLimiting;
 using SeatHive.Api.Models;
+using SeatHive.Api.Services;
 
 namespace SeatHive.Api.Controllers
 {
+    // The race simulation, for anyone signed in: racers try to hold one seat at the same moment and exactly one
+    // may get it. The work is in RaceSimulator.
     [ApiController]
     [Route("api/[controller]")]
-    [Authorize(Roles = Roles.Admin)]
+    [Authorize]
+    [EnableRateLimiting(RateLimitPolicies.Simulation)]
     public class SimulationController : ControllerBase
     {
-        private readonly IServiceScopeFactory _scopeFactory;
+        private readonly RaceSimulator _simulator;
 
-        public SimulationController(IServiceScopeFactory scopeFactory)
+        public SimulationController(RaceSimulator simulator)
         {
-            _scopeFactory = scopeFactory;
+            _simulator = simulator;
         }
 
         [HttpPost("simulate-concurrency")]
-        public async Task<IActionResult> SimulateConcurrency()
+        public async Task<IActionResult> SimulateConcurrency(
+            [FromBody(EmptyBodyBehavior = EmptyBodyBehavior.Allow)] RaceRequest? request)
         {
-            // Bookings belong to real users, so every attempt is made as the admin who started the simulation.
-            if (!User.TryGetUserId(out var userId))
+            var (report, refusal) = await _simulator.RunAsync(request?.SeatId, request?.Racers ?? RaceRequest.DefaultRacers);
+
+            if (refusal != null)
             {
-                return this.ProblemWithCode(StatusCodes.Status401Unauthorized, ErrorCodes.InvalidToken, "The token has no valid user id.");
+                var problem = this.ProblemWithCode(refusal.Status, refusal.Code, refusal.Title);
+                if (refusal.ReleasesAt != null) ((ProblemDetails)problem.Value!).Extensions["releasesAt"] = refusal.ReleasesAt;
+                return problem;
             }
 
-            // We will simulate 20 requests trying to hold Seat #1 at the same time.
-            var tasks = new List<Task<BookingResult>>();
-
-            // Create 20 concurrent threads
-            for (int i = 1; i <= 20; i++)
-            {
-                tasks.Add(Task.Run(async () =>
-                {
-                    // Create a new scope for each "user" (mimics a fresh HTTP request)
-                    using (var scope = _scopeFactory.CreateScope())
-                    {
-                        var service = scope.ServiceProvider.GetRequiredService<BookingService>(); // Resolve BookingService
-
-                        // Try to hold Seat #1
-                        return await service.HoldSeatAsync(1, userId);
-                    }
-                }));
-            }
-
-            // Wait for all 20 users to finish
-            var results = await Task.WhenAll(tasks);
-
-            // Count how many attempts actually took the seat.
-            // Every attempt is the same user, so an attempt that only got the existing hold back does not count.
-            var successCount = results.Count(r => r.IsSuccess && r.Changed);
-            var failCount = results.Length - successCount;
-
-            return Ok(new
-            {
-                TotalRequests = 20,
-                SuccessfulBookings = successCount, // SHOULD BE 1. If > 1, we have a bug!
-                FailedBookings = failCount,
-                Message = successCount > 1
-                    ? "CRITICAL FAIL: Multiple users booked the same seat!"
-                    : "System is safe."
-            });
+            return Ok(report);
         }
     }
 }

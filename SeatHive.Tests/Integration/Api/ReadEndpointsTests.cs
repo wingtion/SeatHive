@@ -281,7 +281,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsync("/api/Simulation/simulate-concurrency", null);
+            var response = await client.PostAsync("/api/Setup/create-data", null);
 
             await ProblemAssert.HasCodeAsync(response, HttpStatusCode.Forbidden, "forbidden");
         }

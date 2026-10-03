@@ -68,10 +68,12 @@ namespace SeatHive.Api.Services
             // The Redis lock only keeps concurrent requests for one seat apart.
             // Only a lock we actually acquired is released, when the handle is disposed.
             IAsyncDisposable? lockHandle;
+            LockOutcome lockOutcome;
             try
             {
                 lockHandle = await _lockService.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(10));
-                if (lockHandle == null) return BookingResult.Failure(BookingError.SeatLocked);
+                if (lockHandle == null) return BookingResult.Failure(BookingError.SeatLocked).WithLock(LockOutcome.Busy);
+                lockOutcome = LockOutcome.Acquired;
             }
             catch (LockUnavailableException ex)
             {
@@ -80,9 +82,18 @@ namespace SeatHive.Api.Services
                 // for the seat are then turned away by the database (seat_held) instead of by the lock.
                 _logger.LogWarning(ex, "Holding seat {SeatId} without the Redis lock; the database decides.", seatId);
                 lockHandle = null;
+                lockOutcome = LockOutcome.Unavailable;
             }
-            await using var releaseLock = lockHandle;
 
+            // The lock is released only after the hold's transaction has ended.
+            await using var releaseLock = lockHandle;
+            var result = await HoldUnderLockAsync(seatId, userId, now);
+            return result.WithLock(lockOutcome);
+        }
+
+        // The part of a hold that runs under the seat lock (or, without Redis, without it), in one transaction.
+        private async Task<BookingResult> HoldUnderLockAsync(int seatId, int userId, DateTime now)
+        {
             await using var transaction = await BeginTransactionAsync();
 
             // One hold at a time per user, so concurrent requests for different seats cannot pass the limit together.
