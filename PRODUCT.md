@@ -47,8 +47,9 @@ A working seat-booking flow with its own "under the hood" layer beside it. The c
 Implemented today:
 
 - `POST /api/auth/register` and `POST /api/auth/login` (email + password, returns a JWT).
+- `POST /api/auth/guest` (no body, returns a JWT): a new user with the role `Guest` for every call, so a visitor can book without registering and still has bookings, limits and a history of their own. A guest lasts as long as its token (2 hours); it cannot sign in again.
 - `POST /api/booking/hold`, `POST /api/booking/{id}/confirm` and `POST /api/booking/{id}/release` (authenticated; the user ID is taken from the token, never from the request body).
-- `POST /api/setup/create-data` (Admin only): clears events, seats and bookings, keeps users, seeds one event with 100 seats (sections A and B, row 1, seats 1–50 each). Seat and event ids start at 1 again; booking ids are never reused.
+- `POST /api/setup/create-data` (Admin only): clears events, seats and bookings, keeps users, seeds one event with 100 seats (sections A and B, row 1, seats 1–50 each). Seat and event ids start at 1 again; booking ids are never reused. Guests whose token ran out are removed. The same reset runs by itself once a night at a configured UTC time (`DemoReset:DailyAtUtc`; off when not set).
 - `POST /api/simulation/simulate-concurrency` (any signed-in user, 5 per minute, one race at a time): racers (2–50, 20 by default), each a racer account of its own, try to hold one seat (given, or the first free one) at the same moment through the real hold logic. The report lists every attempt: racer number, `won` or `rejected`, the code (`seat_locked` or `seat_held`), what happened at the lock (`acquired`, `busy`, `unavailable`) and timings in milliseconds; no user ids. The winner keeps the seat for 10 seconds (configurable), then it is released through the normal release; until then a new race on that seat is refused (`seat_held_by_race` with `releasesAt`). Other refusals: `race_in_progress`, `racers_busy`, `seat_held`, `seat_already_booked`, `seat_not_found`. Everyone watching the event gets the same report live as `raceFinished`.
 - Booking is hold, then pay, then confirm. `POST /api/booking/hold` takes a Redis lock on `lock:seat:{id}` (single-instance `SET NX` with a 10 second expiry), inserts a `Held` booking in Postgres that expires after 5 minutes (configurable; at most 4 active holds per user), then releases the lock. If Redis cannot be reached the hold goes on without the lock and the database's unique index alone decides (the loser of a race gets `seat_held` instead of `seat_locked`). `POST /api/booking/{id}/confirm` turns the owner's unexpired hold into `PaymentPending`, answers `202` and publishes `PaymentRequested`; an optional body `{ "simulatePaymentFailure": true }` makes that payment fail. `POST /api/booking/{id}/release` gives the hold up. Holds that ran out are marked `Expired` on the next hold attempt for that seat and by a background sweeper (every 5 seconds, configurable); a booking waiting for its payment gets a 30 second grace period on top.
 - The worker simulates the payment (1 to 3 seconds, 20% random failures, one charge per payment attempt) and answers with `PaymentSucceeded` or `PaymentFailed`. On success the API marks the booking `Confirmed` and publishes `BookingConfirmed`; the worker then simulates a notification and publishes `NotificationSent`. On failure the booking is `Held` again. A payment that succeeds for a booking that can no longer be confirmed leads to `RefundRequested`, and the worker publishes `RefundCompleted`, or `RefundFailed` (`charge_not_found`, `charge_not_successful`) when the simulated provider has no successful charge to give back. A payment result is announced once and a charge is refunded once, however often the message arrives. Nothing real happens: no money moves and no email is sent.
@@ -65,10 +66,11 @@ Constraints:
 - The interface shows only real system state. Nothing is faked with client-side telemetry.
 - Payment is simulated; no real payment provider.
 
-Undecided:
+Decided:
 
-- Whether the public deployment has an always-on backend to connect to, or is run locally by evaluators.
-- How the destructive `create-data` reset is exposed, if at all, in a shared deployment.
+- The public deployment has an always-on backend (a VPS). Its demo data is reset every night.
+- The destructive `create-data` reset is exposed in the interface to the Admin only, behind a confirmation.
+- Visitors enter as guests with one click; registering with an email stays possible.
 
 The README now matches the code and can be used as the source for UI copy: the lock is a token-owned single-instance Redis lock (`SET NX`, released by a Lua script) backed by a partial unique index on active bookings, not Redlock, and the roles are `User` and `Admin`.
 

@@ -61,20 +61,24 @@ namespace SeatHive.Tests.Integration.Api
         private readonly int _paymentDelayMs;
         private readonly string _environment;
         private readonly ContainersFixture _fixture;
+        private readonly Action<IServiceCollection>? _configureServices;
 
         // withWorker also runs the Worker's consumers in this host, with payments that never fail at random and take
         // paymentDelayMs on the test clock (no time by default), so a booking goes through its whole story
         // without a test publishing anything by hand.
         // environment is "Testing" unless a test is about what differs between environments (Swagger, for example).
+        // configureServices replaces services of the host, for a test that stands in for one (the seat lock, for example).
         public ApiFactory(
             ContainersFixture fixture,
             Dictionary<string, string?>? overrides = null,
             bool withWorker = false,
             int paymentDelayMs = 0,
-            string environment = "Testing")
+            string environment = "Testing",
+            Action<IServiceCollection>? configureServices = null)
         {
             _environment = environment;
             _fixture = fixture;
+            _configureServices = configureServices;
             _settings = new Dictionary<string, string?>
             {
                 ["ConnectionStrings__DefaultConnection"] = fixture.GetPostgresConnectionString(),
@@ -138,6 +142,8 @@ namespace SeatHive.Tests.Integration.Api
                         _settings["ConnectionStrings__DefaultConnection"], WorkerDbContext.ConfigureNpgsql));
                     services.AddScoped<ISimulatedPaymentProvider, SimulatedPaymentProvider>();
                 }
+
+                _configureServices?.Invoke(services);
             });
         }
 

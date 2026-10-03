@@ -13,12 +13,19 @@ namespace SeatHive.Api.Models
         public string Password { get; set; } = string.Empty;
 
         // The racers of the race simulation have this domain; nobody may register in their place.
+        // The same goes for the domain of the guests.
         public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
         {
             if (RacerAccounts.IsRacerEmail(Email))
             {
                 yield return new ValidationResult(
                     $"Emails at {RacerAccounts.Domain} are reserved for the race simulation.", new[] { nameof(Email) });
+            }
+
+            if (GuestAccounts.IsGuestEmail(Email))
+            {
+                yield return new ValidationResult(
+                    $"Emails at {GuestAccounts.Domain} are reserved for guests.", new[] { nameof(Email) });
             }
         }
     }

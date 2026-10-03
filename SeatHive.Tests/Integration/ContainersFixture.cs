@@ -255,6 +255,8 @@ namespace SeatHive.Tests.Integration
         public const string Live = "Api and Worker: live updates";
         // The race simulation: it moves its host's clock and starts hosts of its own on its database.
         public const string Simulation = "Api: simulation";
+        // The nightly reset and what a reset removes: only hosts of their own, whose clocks they move by hours.
+        public const string DemoReset = "Api: demo reset";
         // The booking service on the database, without an API host.
         public const string HoldService = "Service: holds";
         public const string PaymentService = "Service: payments";
@@ -275,6 +277,9 @@ namespace SeatHive.Tests.Integration
 
         [CollectionDefinition(Simulation)]
         public class SimulationCollection : ICollectionFixture<ContainersFixture> { }
+
+        [CollectionDefinition(DemoReset)]
+        public class DemoResetCollection : ICollectionFixture<ContainersFixture> { }
 
         [CollectionDefinition(EndToEnd)]
         public class EndToEndCollection : ICollectionFixture<ContainersFixture> { }
