@@ -84,7 +84,7 @@ The README now matches the code and can be used as the source for UI copy: the l
 - `README.md`: architecture, feature list, run and test instructions.
 - The simulation endpoint's real output (1 success, 19 rejections).
 - Unit tests in `SeatHive.Tests/BookingServiceTests.cs` (xUnit, Moq).
-- Seed event: "Open Air Concert", 30 days out. This is sample data, not a real listing or partnership.
+- Seed event: "Evening Performance", 30 days out. This is sample data, not a real listing or partnership.
 
 Absent, and not to be fabricated: customers, testimonials, real events or venues, pricing, sales figures, load or latency benchmarks, uptime claims, a seat map or venue layout beyond section/row/number.
 

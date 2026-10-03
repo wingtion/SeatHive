@@ -78,7 +78,7 @@ namespace SeatHive.Api.Services
             // 2. Create Event
             var concert = new Event
             {
-                Name = "Open Air Concert",
+                Name = "Evening Performance",
                 Date = DateTime.UtcNow.AddDays(30)
             };
             _context.Events.Add(concert);
