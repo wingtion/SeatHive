@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Npgsql;
 using SeatHive.Api.Data;
@@ -18,12 +19,12 @@ namespace SeatHive.Api.Services
     public class AuthService
     {
         private readonly AppDbContext _context;
-        private readonly IConfiguration _configuration;
+        private readonly JwtOptions _jwt;
 
-        public AuthService(AppDbContext context, IConfiguration configuration)
+        public AuthService(AppDbContext context, IOptions<JwtOptions> jwt)
         {
             _context = context;
-            _configuration = configuration;
+            _jwt = jwt.Value;
         }
 
         // Emails are stored and compared in lowercase.
@@ -78,7 +79,7 @@ namespace SeatHive.Api.Services
         // 3. GENERATE TOKEN
         private string GenerateJwtToken(User user)
         {
-            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_configuration["Jwt:Key"]!));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_jwt.Key));
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
             var claims = new[]
@@ -90,8 +91,8 @@ namespace SeatHive.Api.Services
             };
 
             var token = new JwtSecurityToken(
-                issuer: _configuration["Jwt:Issuer"],
-                audience: _configuration["Jwt:Audience"],
+                issuer: _jwt.Issuer,
+                audience: _jwt.Audience,
                 claims: claims,
                 expires: DateTime.UtcNow.AddHours(2), // Token valid for 2 hours
                 signingCredentials: creds
