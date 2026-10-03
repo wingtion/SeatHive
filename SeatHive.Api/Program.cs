@@ -48,6 +48,9 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Behind the reverse proxy the client's address and scheme come from the forwarded headers of the trusted proxies.
 var behindTrustedProxy = builder.Services.AddTrustedProxies(builder.Configuration);
 
+// The browser origins (the front end) that may call the API and connect to the hub. None configured: CORS is off.
+var corsEnabled = builder.Services.AddAllowedOrigins(builder.Configuration);
+
 // Errors that no controller writes (no token, wrong role, rate limit) get the same ProblemDetails body with a "code".
 builder.Services.AddProblemDetails(options =>
 {
@@ -242,6 +245,12 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+
+// Before authentication: a preflight carries no token and is answered here.
+if (corsEnabled)
+{
+    app.UseCors();
+}
 
 app.UseAuthentication();
 app.UseAuthorization();

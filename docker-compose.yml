@@ -22,7 +22,10 @@ services:
       - SEATHIVE_ADMIN_PASSWORD=${SEATHIVE_ADMIN_PASSWORD:-}
       # Forwarded headers (client address, scheme) are believed only from this network: the reverse proxy joins it.
       - ReverseProxy__TrustedProxies__0=${COMPOSE_SUBNET:-172.28.0.0/24}
-      - ASPNETCORE_ENVIRONMENT=Development
+      # The front end's origin (https://..., no trailing "/"); browsers on any other origin are turned away. Unset: CORS is off.
+      - Cors__AllowedOrigins__0=${CORS_ALLOWED_ORIGIN:-}
+      # No Swagger and no Development settings on a server; docker-compose.override.yml switches to Development locally.
+      - ASPNETCORE_ENVIRONMENT=Production
     ports:
       - "8080:8080"
     depends_on:

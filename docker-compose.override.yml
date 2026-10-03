@@ -3,6 +3,13 @@
 # can also be started with "dotnet run". A server skips it with: docker compose -f docker-compose.yml up
 
 services:
+  api:
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      # The local front end (Vite). Set here because the entry in docker-compose.yml would otherwise
+      # replace the one in appsettings.Development.json with an empty value.
+      - Cors__AllowedOrigins__0=http://localhost:5173
+
   postgres:
     ports:
       - "127.0.0.1:5432:5432"
