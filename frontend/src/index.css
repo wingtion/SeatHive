@@ -1,0 +1,97 @@
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import 'tailwindcss';
+
+/*
+  Design tokens. One accent: amber, and it means one thing only: "held / locked".
+  Contrast (WCAG) of each pair is noted where it matters; text needs 4.5:1, shapes and borders 3:1.
+*/
+:root {
+  color-scheme: light dark;
+
+  --bg: #f3f4f6;
+  --surface: #fbfbfc;
+  --ink: #15181d; /* 16.2:1 on bg */
+  --ink-muted: #565c68; /* 6.1:1 on bg */
+  --line: #d3d7de; /* dividers between content, not the only cue for anything */
+  --line-strong: #7d8490; /* 3.5:1 on bg: outlines of controls and of free seats */
+
+  --hold: #f2a11b; /* the amber fill. 1.9:1 on bg, so a filled shape also gets a --hold-text border */
+  --hold-ink: #15181d; /* text on the amber fill, 8.4:1 */
+  --hold-text: #9a4d00; /* amber as text or border on the light theme, 5.6:1 on bg */
+
+  --danger: #b3261e; /* real failures only, 5.9:1 on bg. A lost race is not a failure. */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216;
+    --surface: #181b21;
+    --ink: #e8eaee; /* 15.6:1 on bg */
+    --ink-muted: #9ba2ae; /* 7.3:1 on bg */
+    --line: #2b2f38;
+    --line-strong: #6b7280; /* 3.9:1 on bg */
+
+    --hold: #f2a11b; /* 8.8:1 on bg */
+    --hold-ink: #15181d;
+    --hold-text: #f5b041; /* 10:1 on bg */
+
+    --danger: #ff8a80; /* 8.2:1 on bg */
+  }
+}
+
+@theme inline {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-hold: var(--hold);
+  --color-hold-ink: var(--hold-ink);
+  --color-hold-text: var(--hold-text);
+  --color-danger: var(--danger);
+
+  /* One corner scale: seats 2px, controls and panels 4px. Nothing is rounder. */
+  --radius-seat: 2px;
+  --radius-control: 4px;
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--hold);
+    color: var(--hold-ink);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+}
