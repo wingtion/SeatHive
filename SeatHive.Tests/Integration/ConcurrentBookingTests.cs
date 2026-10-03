@@ -1,10 +1,12 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using Moq;
 using SeatHive.Api.Models;
 using SeatHive.Api.Services;
 using SeatHive.Shared.Events;
+using StackExchange.Redis;
 
 namespace SeatHive.Tests.Integration
 {
@@ -25,6 +27,23 @@ namespace SeatHive.Tests.Integration
         [Fact]
         public async Task ConcurrentHoldsForSameSeat_ShouldProduceExactlyOneHold()
         {
+            await AssertOneWinnerPerRoundAsync(lockService: null, losersError: null);
+        }
+
+        // Without Redis the holds go on without the lock, and the database alone decides: still exactly one hold,
+        // and everyone else is told that the seat is held (the lock, which would say "locked", is not there).
+        [Fact]
+        public async Task ConcurrentHoldsForSameSeat_ShouldProduceExactlyOneHold_WhenRedisIsDown()
+        {
+            await using var redis = await ConnectionMultiplexer.ConnectAsync(RedisSetup.CreateOptions(RedisLockServiceTests.UnreachableRedis));
+            var lockService = new RedisLockService(redis, NullLogger<RedisLockService>.Instance);
+
+            await AssertOneWinnerPerRoundAsync(lockService, losersError: BookingError.SeatHeld);
+        }
+
+        // lockService null: the real lock on the test Redis. losersError null: any failure counts as losing.
+        private async Task AssertOneWinnerPerRoundAsync(IRedisLockService? lockService, BookingError? losersError)
+        {
             var failedRounds = new List<string>();
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
 
@@ -38,13 +57,17 @@ namespace SeatHive.Tests.Integration
                 var attempts = users.Select(userId => Task.Run(async () =>
                 {
                     await using var db = _fixture.CreateContext();
-                    var service = _fixture.CreateBookingService(db, clock, bus: bus.Object);
+                    var service = _fixture.CreateBookingService(db, clock, lockService, bus.Object);
                     var result = await service.HoldSeatAsync(seatId, userId);
                     return (userId, result);
                 }));
 
                 var results = await Task.WhenAll(attempts);
                 var winners = results.Where(r => r.result.IsSuccess).Select(r => r.userId).ToList();
+                var wrongErrors = results
+                    .Where(r => !r.result.IsSuccess && losersError != null && r.result.Error != losersError)
+                    .Select(r => r.result.Error)
+                    .ToList();
                 var published = ContainersFixture.PublishedTo<SeatHeld>(bus);
 
                 // The seat must have exactly one booking, a hold, and it must belong to the winner.
@@ -55,11 +78,12 @@ namespace SeatHive.Tests.Integration
 
                 // Only the winner announces a held seat.
                 if (winners.Count != 1 || published.Count != 1 || published[0].UserId != winners[0] || bookings.Count != 1
-                    || bookings[0].UserId != winners[0] || bookings[0].Status != BookingStatus.Held)
+                    || bookings[0].UserId != winners[0] || bookings[0].Status != BookingStatus.Held || wrongErrors.Count != 0)
                 {
                     failedRounds.Add(
                         $"round {round}: successes={winners.Count} [{string.Join(",", winners)}], events={published.Count}, " +
-                        $"bookings=[{string.Join(",", bookings.Select(b => $"{b.UserId}:{b.Status}"))}]");
+                        $"bookings=[{string.Join(",", bookings.Select(b => $"{b.UserId}:{b.Status}"))}], " +
+                        $"unexpected errors=[{string.Join(",", wrongErrors)}]");
                 }
             }
 

@@ -18,19 +18,22 @@ namespace SeatHive.Api.Services
         private readonly IPublishEndpoint _publishEndpoint;
         private readonly TimeProvider _timeProvider;
         private readonly HoldOptions _options;
+        private readonly ILogger<BookingService> _logger;
 
         public BookingService(
             AppDbContext context,
             IRedisLockService lockService,
             IPublishEndpoint publishEndpoint,
             TimeProvider timeProvider,
-            IOptions<HoldOptions> options)
+            IOptions<HoldOptions> options,
+            ILogger<BookingService> logger)
         {
             _context = context;
             _lockService = lockService;
             _publishEndpoint = publishEndpoint;
             _timeProvider = timeProvider;
             _options = options.Value;
+            _logger = logger;
         }
 
         private DateTime UtcNow() => _timeProvider.GetUtcNow().UtcDateTime;
@@ -64,8 +67,21 @@ namespace SeatHive.Api.Services
 
             // The Redis lock only keeps concurrent requests for one seat apart.
             // Only a lock we actually acquired is released, when the handle is disposed.
-            await using var lockHandle = await _lockService.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(10));
-            if (lockHandle == null) return BookingResult.Failure(BookingError.SeatLocked);
+            IAsyncDisposable? lockHandle;
+            try
+            {
+                lockHandle = await _lockService.AcquireLockAsync(lockKey, TimeSpan.FromSeconds(10));
+                if (lockHandle == null) return BookingResult.Failure(BookingError.SeatLocked);
+            }
+            catch (LockUnavailableException ex)
+            {
+                // Without Redis the hold goes on without the lock. It is still safe: the unique index lets one
+                // active booking per seat through and the user's row lock keeps the hold limit; concurrent requests
+                // for the seat are then turned away by the database (seat_held) instead of by the lock.
+                _logger.LogWarning(ex, "Holding seat {SeatId} without the Redis lock; the database decides.", seatId);
+                lockHandle = null;
+            }
+            await using var releaseLock = lockHandle;
 
             await using var transaction = await BeginTransactionAsync();
 

@@ -109,6 +109,7 @@ Aynı mesaj sözleşmesini paylaşan iki servis aynı sürümde olmalı. Not: Ma
 
 **O8. Redis bağlantısı başlangıçta senkron ve hata yönetimsiz** — `Program.cs:36-40`
 `AbortOnConnectFail=false` ile uygulama Redis olmadan açılır; her rezervasyon isteği işlenmemiş istisnayla 500 döner (`finally` içindeki `DEL` de atar).
+Kapandı (adım 5d sonrası): kırmızı testler önce durumu doğruladı (Redis yokken her komut 5 sn backlog'da bekleyip `RedisConnectionException` atıyordu, hold 500 dönüyordu). Karar: kilit yalnızca çekişmeyi azaltır, doğruluğu veritabanı sağlar; Redis yoksa hold kilitsiz sürer ve uyarı loglanır, yarışı kaybeden `seat_held` alır. `RedisSetup`: `ConnectAsync`, `BacklogPolicy.FailFast`, 1 sn zaman aşımı. Kilit servisi Redis hatasını `LockUnavailableException`'a çevirir; bırakma hatası loglanır, sonucu bozmaz. Ayrıca Development dışında `UseExceptionHandler`: beklenmeyen hata problem+json 500 `internal_error`, ayrıntı yalnızca logda. Testler: Redis yokken 25 turda tam bir kazanan, hızlı başarısızlık, bırakma hatası, API'nin Redis'siz açılıp hold alması, 500 gövdesi; docker smoke testinde Redis çalışan stack'te durdurulup başlatıldı.
 
 **O9. Yerel bağlantı portu tutmuyor** — `appsettings.json:10` (5433) ve `docker-compose.yml:44` (5432)
 Compose altyapısıyla API'yi yerelde çalıştırmak bağlanamaz.

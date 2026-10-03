@@ -1,6 +1,7 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
 using Npgsql;
@@ -230,10 +231,11 @@ namespace SeatHive.Tests.Integration
         {
             return new BookingService(
                 db,
-                lockService ?? new RedisLockService(Redis),
+                lockService ?? new RedisLockService(Redis, NullLogger<RedisLockService>.Instance),
                 bus ?? Mock.Of<IPublishEndpoint>(),
                 clock,
-                Options.Create(options ?? new HoldOptions()));
+                Options.Create(options ?? new HoldOptions()),
+                NullLogger<BookingService>.Instance);
         }
     }
 

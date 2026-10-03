@@ -101,10 +101,8 @@ builder.Services.AddMassTransit(x =>
     });
 });
 
-var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
-redisOptions.AbortOnConnectFail = false;
-
-var redisConnection = ConnectionMultiplexer.Connect(redisOptions);
+// The API starts without Redis too (see RedisSetup); holds then go on without the lock.
+var redisConnection = await ConnectionMultiplexer.ConnectAsync(RedisSetup.CreateOptions(redisConnectionString));
 builder.Services.AddSingleton<IConnectionMultiplexer>(redisConnection);
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
@@ -233,6 +231,13 @@ using (var scope = app.Services.CreateScope())
 if (behindTrustedProxy)
 {
     app.UseForwardedHeaders();
+}
+
+// An exception nobody handled becomes a 500 with a ProblemDetails body ("internal_error") that says nothing
+// about the exception; that is logged. In Development the developer exception page shows it instead.
+if (!app.Environment.IsDevelopment())
+{
+    app.UseExceptionHandler();
 }
 
 // Gives a response that has a status code but no body (401, 403, 429) a ProblemDetails body.
