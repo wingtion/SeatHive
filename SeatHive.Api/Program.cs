@@ -36,6 +36,11 @@ if (Encoding.UTF8.GetByteCount(jwtKey) < 32)
     throw new InvalidOperationException("Required setting 'Jwt:Key' must be at least 32 bytes long.");
 }
 
+// The same "Jwt" section signs the tokens (AuthService) and validates them (AddJwtBearer below).
+var jwtSection = builder.Configuration.GetSection(JwtOptions.SectionName);
+var jwtOptions = jwtSection.Get<JwtOptions>()!;
+builder.Services.Configure<JwtOptions>(jwtSection);
+
 var dbConnectionString = RequiredSetting("ConnectionStrings:DefaultConnection");
 var redisConnectionString = RequiredSetting("ConnectionStrings:Redis");
 var rabbitUsername = RequiredSetting("RabbitMQ:Username");
@@ -158,9 +163,9 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = builder.Configuration["Jwt:Issuer"],
-            ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ValidIssuer = jwtOptions.Issuer,
+            ValidAudience = jwtOptions.Audience,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtOptions.Key)),
             NameClaimType = "sub",
             RoleClaimType = "role"
         };
