@@ -7,6 +7,7 @@ import { useEventBoard } from '../board/useEventBoard'
 import { useNow } from '../board/useNow'
 import type { LiveStatus } from '../live/seatHub'
 import { Button } from './Button'
+import { Hood } from './Hood'
 import { MySeats } from './MySeats'
 import { SeatGrid } from './SeatGrid'
 import { SeatMark } from './SeatMark'
@@ -77,29 +78,30 @@ export function EventBoard() {
       </header>
 
       <div className="grid gap-10 lg:grid-cols-[minmax(0,27rem)_minmax(0,1fr)] lg:gap-16">
-        <section aria-labelledby="seats-heading" className="flex flex-col gap-6">
-          <h2 id="seats-heading" className="sr-only">
-            Seats
-          </h2>
-          <Legend seats={board.seats} mine={active.length} />
+        {/* The stage: the booking itself. */}
+        <div className="flex flex-col gap-10">
+          <section aria-labelledby="seats-heading" className="flex flex-col gap-6">
+            <h2 id="seats-heading" className="sr-only">
+              Seats
+            </h2>
+            <Legend seats={board.seats} mine={active.length} />
 
-          {board.seatError && (
-            <p role="alert" className="border-l-2 border-ink pl-3 text-sm">
-              {seatWithError && <span className="font-mono font-medium">{seatLabel(seatWithError)}: </span>}
-              {board.seatError.message}
-            </p>
-          )}
+            {board.seatError && (
+              <p role="alert" className="border-l-2 border-ink pl-3 text-sm">
+                {seatWithError && <span className="font-mono font-medium">{seatLabel(seatWithError)}: </span>}
+                {board.seatError.message}
+              </p>
+            )}
 
-          <SeatGrid
-            seats={board.seats}
-            mine={mine}
-            busySeats={board.busySeats}
-            canHold={session !== null}
-            onHold={(seatId) => void board.hold(seatId)}
-          />
-        </section>
+            <SeatGrid
+              seats={board.seats}
+              mine={mine}
+              busySeats={board.busySeats}
+              canHold={session !== null}
+              onHold={(seatId) => void board.hold(seatId)}
+            />
+          </section>
 
-        <aside className="max-w-md">
           <MySeats
             signedIn={session !== null}
             bookings={active}
@@ -110,6 +112,10 @@ export function EventBoard() {
             onConfirm={(bookingId, fail) => void board.confirm(bookingId, fail)}
             onRelease={(bookingId) => void board.release(bookingId)}
           />
+        </div>
+
+        <aside className="lg:border-l lg:border-line lg:pl-16">
+          <Hood board={board} session={session} mine={mine} now={now} />
         </aside>
       </div>
     </div>

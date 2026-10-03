@@ -39,6 +39,23 @@ export function confirmBooking(token: string, bookingId: number, simulatePayment
   })
 }
 
+// One event that happened to a booking, as the API recorded it when it arrived over the bus.
+export interface BookingHistoryItem {
+  eventId: string
+  sequence: number
+  type: string
+  occurredAt: string
+  paymentId: string | null
+  detail: string | null
+  // True for what the worker only simulates: payments, refunds and notifications.
+  simulated: boolean
+}
+
+// What happened to one of the caller's own bookings, in the order it happened. A booking has a dozen events at most.
+export function getBookingHistory(token: string, bookingId: number, signal?: AbortSignal): Promise<Page<BookingHistoryItem>> {
+  return request<Page<BookingHistoryItem>>(`/api/booking/${bookingId}/history?pageSize=100`, { token, signal })
+}
+
 export function releaseBooking(token: string, bookingId: number): Promise<void> {
   return request<void>(`/api/booking/${bookingId}/release`, { method: 'POST', token })
 }

@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { confirmBooking, getMyBookings, holdSeat, releaseBooking, type Booking } from '../api/bookings'
 import { ApiError, NETWORK_ERROR } from '../api/client'
 import { getEvents, getSeats, type EventSummary, type Seat } from '../api/events'
+import { resetDemoData } from '../api/setup'
+import { runRace, type RaceReport } from '../api/simulation'
 import { useAuth } from '../auth/context'
 import { watchEvent, type BookingEventMessage, type LiveStatus } from '../live/seatHub'
 import { applyBookingEvent, applySeatChange } from './boardState'
+import { describeRaceFailure, describeResetFailure } from '../hood/messages'
 import { describeBookingFailure, isSignedOut } from './messages'
 
 type Load =
@@ -29,6 +32,17 @@ export interface EventBoard {
   bookingErrors: Readonly<Record<number, string>>
   // The latest thing the API said happened to a booking, by booking id.
   lastEvents: Readonly<Record<number, BookingEventMessage>>
+  // Everything the hub said about the person's bookings since the page was opened, each event once.
+  liveEvents: readonly BookingEventMessage[]
+  // Goes up when the connection came back after a gap: what is read once should be read again.
+  resyncs: number
+  // The latest race on this event, whoever started it.
+  race: RaceReport | null
+  raceRunning: boolean
+  raceError: string | null
+  startRace: (racers: number) => Promise<void>
+  // Admin only. Answers what went wrong, or null when the data was reset.
+  resetDemoData: () => Promise<string | null>
   hold: (seatId: number) => Promise<void>
   confirm: (bookingId: number, simulatePaymentFailure: boolean) => Promise<void>
   release: (bookingId: number) => Promise<void>
@@ -51,6 +65,11 @@ export function useEventBoard(): EventBoard {
   const [seatError, setSeatError] = useState<EventBoard['seatError']>(null)
   const [bookingErrors, setBookingErrors] = useState<Record<number, string>>({})
   const [lastEvents, setLastEvents] = useState<Record<number, BookingEventMessage>>({})
+  const [liveEvents, setLiveEvents] = useState<readonly BookingEventMessage[]>([])
+  const [resyncs, setResyncs] = useState(0)
+  const [race, setRace] = useState<RaceReport | null>(null)
+  const [raceRunning, setRaceRunning] = useState(false)
+  const [raceError, setRaceError] = useState<string | null>(null)
 
   const eventId = load.kind === 'ready' ? load.event.id : null
   const bookings = token !== null && own.owner === token ? own.items : NO_BOOKINGS
@@ -93,6 +112,18 @@ export function useEventBoard(): EventBoard {
     void read()
     return () => abort.abort()
   }, [reloads])
+
+  // Everything on screen came from data that is gone: it is cleared and read again.
+  const dataWasReset = useCallback(() => {
+    setNotice('The demo data was reset: every booking is gone and all seats are free again.')
+    setSeatError(null)
+    setBookingErrors({})
+    setLastEvents({})
+    setLiveEvents([])
+    setRace(null)
+    setRaceError(null)
+    setReloads((count) => count + 1)
+  }, [])
 
   const refreshSeats = useCallback(async () => {
     const id = current.current.eventId
@@ -141,25 +172,25 @@ export function useEventBoard(): EventBoard {
       onSeatChanged: (change) => setSeats((seatsNow) => applySeatChange(seatsNow, change)),
       onBookingEvent: (message) => {
         setLastEvents((events) => ({ ...events, [message.bookingId]: message }))
+        // The hub may send an event twice; it is kept once.
+        setLiveEvents((events) =>
+          events.some((known) => known.eventId === message.eventId) ? events : [...events, message].slice(-MAX_LIVE_EVENTS),
+        )
 
         // The event says what the booking is now; only a booking not seen before is read from the API.
         const known = applyBookingEvent(current.current.bookings, message)
         if (known === null) void refreshBookings()
         else setOwn((ownNow) => ({ owner: ownNow.owner, items: applyBookingEvent(ownNow.items, message) ?? ownNow.items }))
       },
-      onDemoDataReset: () => {
-        setNotice('The demo data was reset: every booking is gone and all seats are free again.')
-        setSeatError(null)
-        setBookingErrors({})
-        setLastEvents({})
-        setReloads((count) => count + 1)
-      },
+      onRaceFinished: setRace,
+      onDemoDataReset: dataWasReset,
       onResync: () => {
+        setResyncs((count) => count + 1)
         void refreshSeats()
         void refreshBookings()
       },
     })
-  }, [token, eventId, refreshBookings, refreshSeats])
+  }, [token, eventId, refreshBookings, refreshSeats, dataWasReset])
 
   const hold = useCallback(
     async (seatId: number) => {
@@ -221,6 +252,43 @@ export function useEventBoard(): EventBoard {
     [act],
   )
 
+  const startRace = useCallback(
+    async (racers: number) => {
+      if (!token) return
+
+      setRaceError(null)
+      setRaceRunning(true)
+      try {
+        // The hub sends the same report to everyone watching; the starter has it from the answer already.
+        setRace(await runRace(token, racers))
+        void refreshSeats()
+      } catch (error) {
+        if (isSignedOut(error)) endSession()
+        else setRaceError(describeRaceFailure(error))
+      } finally {
+        setRaceRunning(false)
+      }
+    },
+    [token, refreshSeats, endSession],
+  )
+
+  const reset = useCallback(async (): Promise<string | null> => {
+    if (!token) return null
+
+    try {
+      await resetDemoData(token)
+      // The hub tells everyone, this page included; without a connection the page would not hear of it.
+      dataWasReset()
+      return null
+    } catch (error) {
+      if (isSignedOut(error)) {
+        endSession()
+        return null
+      }
+      return describeResetFailure(error)
+    }
+  }, [token, dataWasReset, endSession])
+
   const retry = useCallback(() => {
     setLoad({ kind: 'loading' })
     setReloads((count) => count + 1)
@@ -241,6 +309,13 @@ export function useEventBoard(): EventBoard {
     seatError,
     bookingErrors,
     lastEvents,
+    liveEvents,
+    resyncs,
+    race,
+    raceRunning,
+    raceError,
+    startRace,
+    resetDemoData: reset,
     hold,
     confirm,
     release,
@@ -248,6 +323,9 @@ export function useEventBoard(): EventBoard {
 }
 
 const NO_BOOKINGS: Booking[] = []
+
+// More than a visit produces; the list must only not grow without end.
+const MAX_LIVE_EVENTS = 200
 
 function without(set: ReadonlySet<number>, value: number): ReadonlySet<number> {
   const next = new Set(set)

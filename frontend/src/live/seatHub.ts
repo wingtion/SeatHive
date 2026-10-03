@@ -1,5 +1,6 @@
 import { HubConnectionBuilder, HubConnectionState, LogLevel, type HubConnection } from '@microsoft/signalr'
 import { apiBaseUrl } from '../api/client'
+import type { RaceReport } from '../api/simulation'
 import type { SeatChange } from '../board/boardState'
 
 export type LiveStatus = 'off' | 'connecting' | 'live' | 'reconnecting'
@@ -20,6 +21,8 @@ export interface SeatHubHandlers {
   onStatus: (status: LiveStatus) => void
   onSeatChanged: (change: SeatChange) => void
   onBookingEvent: (message: BookingEventMessage) => void
+  // A race of the simulation on a seat of this event is over, whoever started it.
+  onRaceFinished: (report: RaceReport) => void
   onDemoDataReset: () => void
   // The connection is back after a gap: whatever was sent meanwhile was missed, so everything is read again.
   onResync: () => void
@@ -41,8 +44,9 @@ export function watchEvent(token: string, eventId: number, handlers: SeatHubHand
   })
   connection.on('bookingEvent', handlers.onBookingEvent)
   connection.on('demoDataReset', handlers.onDemoDataReset)
-  // Listened to from the next step on (the race simulation); registered so the client does not log it as unknown.
-  connection.on('raceFinished', () => {})
+  connection.on('raceFinished', (report: RaceReport) => {
+    if (report.eventId === eventId) handlers.onRaceFinished(report)
+  })
 
   async function join() {
     await connection.invoke('JoinEvent', eventId)
