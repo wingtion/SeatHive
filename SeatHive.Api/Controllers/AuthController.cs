@@ -21,15 +21,22 @@ namespace SeatHive.Api.Controllers
         public async Task<IActionResult> Register([FromBody] RegisterRequest request)
         {
             var result = await _authService.RegisterAsync(request.Email, request.Password);
-            if (result == "User already exists.") return BadRequest(result);
-            return Ok(result);
+            if (result == RegisterResult.EmailAlreadyRegistered)
+            {
+                return this.ProblemWithCode(StatusCodes.Status409Conflict, ErrorCodes.EmailAlreadyRegistered, "User already exists.");
+            }
+
+            return Ok("User registered successfully.");
         }
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             var token = await _authService.LoginAsync(request.Email, request.Password);
-            if (token == null) return Unauthorized("Invalid email or password.");
+            if (token == null)
+            {
+                return this.ProblemWithCode(StatusCodes.Status401Unauthorized, ErrorCodes.InvalidCredentials, "Invalid email or password.");
+            }
 
             return Ok(new { Token = token });
         }

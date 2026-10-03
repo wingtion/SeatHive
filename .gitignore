@@ -5,6 +5,8 @@ obj/
 *.user
 *.suo
 appsettings.Development.json
+# The API's holds no secrets (those stay in user-secrets), only the local front end's origin.
+!SeatHive.Api/appsettings.Development.json
 SeatHive.Api/bin/
 SeatHive.Api/obj/
 SeatHive.Worker/bin/

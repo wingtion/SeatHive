@@ -3,7 +3,8 @@ using System.Net.Http.Json;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class RateLimitTests
     {
         private const int Limit = 3;
@@ -47,17 +48,17 @@ namespace SeatHive.Tests.Integration.Api
         public async Task Booking_ShouldReturn429_WhenLimitIsExceeded()
         {
             await using var api = CreateLimitedApi();
-            // Register + login use 2 of the 3 auth permits.
+            // The user gets its token without logging in, so the auth limit is not touched here.
             var client = await api.CreateUserClientAsync();
             var seatId = await _fixture.CreateFreeSeatAsync();
 
             for (var i = 0; i < Limit; i++)
             {
-                var allowed = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+                var allowed = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
                 Assert.NotEqual(HttpStatusCode.TooManyRequests, allowed.StatusCode);
             }
 
-            var rejected = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+            var rejected = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
 
             Assert.Equal(HttpStatusCode.TooManyRequests, rejected.StatusCode);
         }

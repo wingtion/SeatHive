@@ -1,8 +1,8 @@
-version: '3.8'
-
 # Secrets come from a .env file next to this file (copy .env.example to .env).
-# Infrastructure ports are not published here; docker-compose.override.yml publishes them for local development.
-# On a server run: docker compose -f docker-compose.yml up -d --build
+# Images are pinned to a release line that only gets fixes: Postgres by major version (its minor releases are
+# fixes only), the others by minor version. The tests start the same Postgres and Redis images (ComposeImages).
+# Only Caddy (80, 443) publishes ports here; docker-compose.override.yml publishes the API and the infrastructure
+# on 127.0.0.1 for local development. On a server run: docker compose -f docker-compose.yml up -d --build
 
 services:
   # 1. API Service (Port 8080)
@@ -20,9 +20,13 @@ services:
       - Jwt__Key=${JWT_KEY:?Set JWT_KEY in .env}
       - SEATHIVE_ADMIN_EMAIL=${SEATHIVE_ADMIN_EMAIL:-}
       - SEATHIVE_ADMIN_PASSWORD=${SEATHIVE_ADMIN_PASSWORD:-}
-      - ASPNETCORE_ENVIRONMENT=Development
-    ports:
-      - "8080:8080"
+      # Forwarded headers (client address, scheme) are believed only from the reverse proxy's own address.
+      - ReverseProxy__TrustedProxies__0=${CADDY_IP:-172.28.0.10}
+      # The front end's origin (https://..., no trailing "/"); browsers on any other origin are turned away. Unset: CORS is off.
+      - Cors__AllowedOrigins__0=${CORS_ALLOWED_ORIGIN:-}
+      # No Swagger and no Development settings on a server; docker-compose.override.yml switches to Development locally.
+      - ASPNETCORE_ENVIRONMENT=Production
+    # No published port: on a server the API is reached through Caddy only.
     depends_on:
       postgres:
         condition: service_healthy
@@ -38,6 +42,8 @@ services:
       context: .
       dockerfile: SeatHive.Worker/Dockerfile
     environment:
+      # The Worker keeps its message inbox and outbox in the "worker" schema of the same database.
+      - ConnectionStrings__DefaultConnection=Host=postgres;Database=seathivedb;Username=postgres;Password=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       - RabbitMQ__HostName=rabbitmq
       - RabbitMQ__Username=${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
       - RabbitMQ__Password=${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
@@ -46,6 +52,29 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+
+  # The only service a server publishes: HTTPS (and HTTP/3) in front of the API. See caddy/Caddyfile.
+  # Postgres, Redis and RabbitMQ (its management UI included) publish nothing; docker-compose.override.yml
+  # publishes them on 127.0.0.1 for local development only.
+  caddy:
+    image: caddy:2.11-alpine
+    environment:
+      # The API's domain; Caddy gets its certificate by itself. Unset: localhost with a local certificate.
+      - SITE_ADDRESS=${SITE_ADDRESS:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      default:
+        # Fixed, so the API can trust this one address (ReverseProxy__TrustedProxies__0).
+        ipv4_address: ${CADDY_IP:-172.28.0.10}
+    depends_on:
+      - api
 
   # 3. PostgreSQL Database
   postgres:
@@ -65,7 +94,7 @@ services:
 
   # 4. Redis Cache
   redis:
-    image: redis:alpine
+    image: redis:8.10-alpine
     container_name: seathive_redis
     command: ["redis-server", "--requirepass", "${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}"]
     environment:
@@ -79,7 +108,7 @@ services:
 
   # 5. RabbitMQ Queue
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:4.3-management-alpine
     container_name: seathive_rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?Set RABBITMQ_USER in .env}
@@ -90,5 +119,16 @@ services:
       timeout: 10s
       retries: 10
 
+# A fixed subnet, so the reverse proxy can have a fixed address (CADDY_IP). The other containers get their addresses
+# from the upper half only (ip_range), so none of them can take the proxy's address before it starts.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-172.28.0.0/24}
+          ip_range: ${COMPOSE_IP_RANGE:-172.28.0.128/25}
+
 volumes:
   postgres_data:
+  caddy_data:
+  caddy_config:

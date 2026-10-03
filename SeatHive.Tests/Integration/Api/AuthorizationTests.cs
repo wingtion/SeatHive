@@ -8,11 +8,11 @@ using Microsoft.IdentityModel.Tokens;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class AuthorizationTests
     {
         private const string ResetUrl = "/api/Setup/create-data";
-        private const string SimulationUrl = "/api/Simulation/simulate-concurrency";
 
         private readonly ContainersFixture _fixture;
 
@@ -21,9 +21,9 @@ namespace SeatHive.Tests.Integration.Api
             _fixture = fixture;
         }
 
+        // The race simulation is open to every signed-in user; see SimulationTests.
         [Theory]
         [InlineData(ResetUrl)]
-        [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn401_ForAnonymous(string url)
         {
             var client = _fixture.Api.CreateClient();
@@ -35,10 +35,9 @@ namespace SeatHive.Tests.Integration.Api
 
         [Theory]
         [InlineData(ResetUrl)]
-        [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn403_ForNormalUser(string url)
         {
-            var client = await _fixture.Api.CreateUserClientAsync();
+            var client = await _fixture.Api.SignInAsUserAsync();
 
             var response = await client.PostAsync(url, null);
 
@@ -47,10 +46,9 @@ namespace SeatHive.Tests.Integration.Api
 
         [Theory]
         [InlineData(ResetUrl)]
-        [InlineData(SimulationUrl)]
         public async Task AdminEndpoint_ShouldReturn200_ForAdmin(string url)
         {
-            var client = await _fixture.Api.CreateAdminClientAsync();
+            var client = await _fixture.Api.SignInAsAdminAsync();
 
             var response = await client.PostAsync(url, null);
 
@@ -97,7 +95,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = ApiFactory.Authorize(_fixture.Api.CreateClient(), CreateToken(sub: "not-a-number"));
 
-            var response = await client.PostAsJsonAsync("/api/Booking", new { seatId = 1 });
+            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId = 1 });
 
             Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
         }
@@ -108,7 +106,7 @@ namespace SeatHive.Tests.Integration.Api
         }
 
         // A correctly signed token, so only the content of "sub" is under test.
-        private static string CreateToken(string sub)
+        internal static string CreateToken(string sub)
         {
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(ApiFactory.JwtKey));
             var token = new JwtSecurityToken(

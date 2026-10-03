@@ -67,6 +67,13 @@ Projenin ana iddiası olan "20 istekten yalnızca 1'i başarılı olur" kodda ga
 - Yer: `SeatHive.Api/Controllers/SimulationController.cs:8-9, 18-41`
 - Sorun: Yetki ve rate limit yok; koltuk #1 ve 20 kullanıcı sabit; HTTP ve JWT katmanından geçmiyor; var olmayan kullanıcı kimlikleri (1001–1020) ile gerçek koltuğu kalıcı olarak rezerve ediyor. İkinci çalıştırmada 0 başarı döner ve yine "System is safe." der (`:53-55`).
 - Çözüm: Bölüm 7'ye bakın.
+- Kapandı (adım 5e). Eski simülasyonun 20 denemesi aynı admin ile yapıldığı için kullanıcı satırındaki `FOR UPDATE` onları sıraya diziyordu; yani "20 kişi yarışıyor" iddiası sınanmıyordu. Şimdi:
+  - Giriş yapmış her kullanıcı yarış başlatabilir; kullanıcı başına 5/dk limit var ve aynı anda tek yarış çalışır.
+  - Her yarışçı ayrı bir kullanıcıdır (50 `Racer` hesabı; giriş yapılamaz, kayıt reddedilir) ve kendi scope'unda çalışır. Hepsi bir başlangıç kapısında bekleyip aynı anda gerçek `HoldSeatAsync`'i çağırır.
+  - Cevap her denemeyi raporlar: sonuç, kod, kilit durumu (hold içinde ölçülür) ve süre. Aynı rapor outbox → bus → hub yoluyla `raceFinished` olarak yayınlanır.
+  - Kazanan 10 sn tutar (`Simulation:WinnerHoldSeconds`), sonra gerçek release yoluyla bırakılır. Bu arada aynı koltukta yarış `seat_held_by_race` ile reddedilir; bırakma kaybolursa TTL devreye girer.
+  - Testler: 20 test, yarış testleri 5 kez tekrarlandı. Docker smoke testinde 1 kazanan ve 19 `seat_locked/busy`; bırakma çalıştı; Redis kapalıyken 19 `seat_held/unavailable`.
+  - Yan bulgu (kapandı): Redis kapalıyken veritabanının reddettiği her hold (unique index, 23505), kod tarafından doğru şekilde `seat_held` olarak ele alınsa da EF Core tarafından `fail` seviyesinde loglanıyordu (her kayıp için `Command[20102]` + `Update[10000]`). Hold artık partial index'e karşı `INSERT ... ON CONFLICT ... DO NOTHING RETURNING *` ile yazılıyor; satır dönmezse `seat_held`. Kırmızı test önce 25 turda 475 başarısız komut saydı (EF interceptor'ı), şimdi 0; Redis açıkken de 0.
 
 **Y4. Şema hiç migrate edilmiyor**
 - Yer: `SeatHive.Api/Program.cs` (`Migrate()` yok), `SetupController.cs:21`, `Migrations/20260215132940_AddUsersTable.cs`
@@ -102,12 +109,14 @@ Rezervasyon bir koltuk satırındaki bayrak; `Seat.UserId` için FK yok; hold/ö
 
 **O6. Compose `ASPNETCORE_ENVIRONMENT=Development` ile çalışıyor** — `docker-compose.yml:14`, `Program.cs:95-99`
 Swagger yalnızca bu yüzden açılıyor; canlıda geliştirici hata sayfası ayrıntı sızdırır.
+Adım 5d'de kapandı (alt adım E): `docker-compose.yml` artık `ASPNETCORE_ENVIRONMENT=Production`, yerelde otomatik okunan `docker-compose.override.yml` ise `Development`. Sunucuda yalnızca ana dosyayla kurulumda Swagger kapalı ve Development ayarları (localhost CORS origin'i) yüklenmiyor; docker smoke testinde `swagger.json` Production'da 404, Development'ta 200 döndü.
 
 **O7. MassTransit sürümleri uyumsuz** — `SeatHive.Api.csproj:13` (8.5.8), `SeatHive.Worker.csproj:12` (8.1.1)
 Aynı mesaj sözleşmesini paylaşan iki servis aynı sürümde olmalı. Not: MassTransit 9 ticari lisansa geçti; 8.x'te kalmak bilinçli bir karar olmalı.
 
 **O8. Redis bağlantısı başlangıçta senkron ve hata yönetimsiz** — `Program.cs:36-40`
 `AbortOnConnectFail=false` ile uygulama Redis olmadan açılır; her rezervasyon isteği işlenmemiş istisnayla 500 döner (`finally` içindeki `DEL` de atar).
+Kapandı (adım 5d sonrası): kırmızı testler önce durumu doğruladı (Redis yokken her komut 5 sn backlog'da bekleyip `RedisConnectionException` atıyordu, hold 500 dönüyordu). Karar: kilit yalnızca çekişmeyi azaltır, doğruluğu veritabanı sağlar; Redis yoksa hold kilitsiz sürer ve uyarı loglanır, yarışı kaybeden `seat_held` alır. `RedisSetup`: `ConnectAsync`, `BacklogPolicy.FailFast`, 1 sn zaman aşımı. Kilit servisi Redis hatasını `LockUnavailableException`'a çevirir; bırakma hatası loglanır, sonucu bozmaz. Ayrıca Development dışında `UseExceptionHandler`: beklenmeyen hata problem+json 500 `internal_error`, ayrıntı yalnızca logda. Testler: Redis yokken 25 turda tam bir kazanan, hızlı başarısızlık, bırakma hatası, API'nin Redis'siz açılıp hold alması, 500 gövdesi; docker smoke testinde Redis çalışan stack'te durdurulup başlatıldı.
 
 **O9. Yerel bağlantı portu tutmuyor** — `appsettings.json:10` (5433) ve `docker-compose.yml:44` (5432)
 Compose altyapısıyla API'yi yerelde çalıştırmak bağlanamaz.
@@ -119,11 +128,23 @@ Compose altyapısıyla API'yi yerelde çalıştırmak bağlanamaz.
 - **D3. `LoginRequest`** controller dosyasında tanımlı ve register için de kullanılıyor (`AuthController.cs:33`).
 - **D4. Controller içinde senkron veri erişimi:** `SetupController.cs:21-48` (`SaveChanges`, `EnsureCreated`).
 - **D5. Servisler somut sınıf olarak enjekte ediliyor** (`Program.cs:74, 76`); konfigürasyon `IConfiguration["Jwt:Key"]!` ile dağınık okunuyor (`Program.cs:87-89`, `AuthService.cs:59, 70-71`). Options pattern yeterli; her servise arayüz eklemek gereksiz karmaşıklık olur.
-- **D6. Swagger güvenlik şeması `ApiKey`** (`Program.cs:54`); `Http` + `bearer` olursa "Bearer " yazmak gerekmez.
-- **D7. `UseHttpsRedirection`** (`Program.cs:101`) konteynerde HTTPS portu olmadan etkisiz; ters vekil arkasında forwarded headers gerekir.
+- **D6. Swagger güvenlik şeması `ApiKey`** (`Program.cs:54`); `Http` + `bearer` olursa "Bearer " yazmak gerekmez. Adım 5d'de kapandı (alt adım A): şema `http`/`bearer`, yalnızca token isteyen endpoint'lerde; bkz. "Ertelenen yükseltmeler".
+- **D7. `UseHttpsRedirection`** (`Program.cs:101`) konteynerde HTTPS portu olmadan etkisiz; ters vekil arkasında forwarded headers gerekir. Adım 5d'de eklendi: `ReverseProxy:TrustedProxies` ile yalnızca yapılandırılmış proxy'lerden gelen `X-Forwarded-For`/`X-Forwarded-Proto` kabul ediliyor (`ForwardLimit = 1`); `ForwardedHeadersTests` doğruluyor. Dağıtım hazırlığında ters vekil eklendi:
+  - **Caddy 2.11:** HTTPS'i sonlandırıyor (sunucuda Let's Encrypt, yerelde kendi CA'sı) ve yalnızca `api:8080`'e yönlendiriyor.
+  - **Maruz kalma:** sunucuda yalnızca Caddy port yayınlıyor (80/443). API, Postgres, Redis ve RabbitMQ (yönetim arayüzü 15672 dahil) hiçbir port yayınlamıyor.
+  - **Güven:** API yalnızca Caddy'nin sabit adresine (`CADDY_IP`, /32) güveniyor. Diğer konteynerler adreslerini alt ağın üst yarısından alıyor (`ip_range`), böylece Caddy'nin adresini kapamıyorlar.
+  - **Log:** Caddy erişim logunda `access_token` `REDACTED` olarak görünüyor.
+  - **Testler:** `ServerExposureTests`, `docker compose config` çıktısı üzerinden yayınlanan portları, Caddy'nin tek hedefini ve güvenilen adresi doğruluyor. Bu testler eski compose dosyalarına karşı önce kırmızıydı.
+  - **Docker smoke testi:** yalnızca 80/443 açıktı; RabbitMQ arayüzüne Caddy üzerinden ulaşılamadı; `wss` ve `raceFinished` Caddy üzerinden çalıştı; token logda yoktu; uydurma `X-Forwarded-For` IP limitini aşamadı.
 - **D8. Kullanıcı sayımı:** register "User already exists." dönüyor (`AuthService.cs:26`). Demo için kabul edilebilir.
 - **D9. Loglarda string interpolasyonu:** `Worker/Consumers/BookingConsumer.cs:19, 24`; yapılandırılmış log şablonu kullanılmalı.
 - **D10. İmaj ve paket yaşı:** `redis:alpine` etiketsiz, `rabbitmq:3-management` (3.x topluluk desteği bitti), compose `version:` anahtarı artık geçersiz; `Swashbuckle 6.6.2`, `xunit 2.5.3`, `Microsoft.NET.Test.Sdk 17.8.0`, `coverlet 6.0.0` eski; EF paketleri karışık (`8.0.11` ve `8.0.24`).
+  Kapandı (dağıtım hazırlığı):
+  - **Paketler:** net10 geçişinde ve sonrasında güncellendi: Swashbuckle 10.2.3, xunit 2.9.3, Microsoft.NET.Test.Sdk 18.10.1, coverlet 10.1.0, EF Core 10.0.12 (tek sürüm), StackExchange.Redis 3.3.1. `xunit.runner.visualstudio` 4.x ertelemesi "Ertelenen yükseltmeler"de.
+  - **İmajlar:** düzeltme alan sürüm serisine sabitlendi. Postgres `16-alpine` (16.15), major'a sabit; minor sürümleri yalnızca düzeltme içeriyor, major yükseltme ise volume'u taşımayı gerektiriyor. Redis `8.10-alpine` (8.10.2), RabbitMQ `4.3-management-alpine` (4.3.6), Caddy `2.11-alpine` (2.11.6).
+  - **Tek kaynak:** compose `version:` anahtarı kaldırıldı. Testler Postgres ve Redis imajını `docker-compose.yml`'den okuyor (`ComposeImages`), böylece sunucuyla aynı sürümü sınıyorlar.
+  - **RabbitMQ 3.13 → 4.3:** 4.3, geçici ve paylaşımlı kuyrukları (`transient_nonexcl_queues`) varsayılan olarak reddediyor. MassTransit 8.5.11'in tanımladığı bütün kuyruklar kalıcı ve `rabbitmq-diagnostics check_if_any_deprecated_features_are_used` "kullanılan yok" dedi. Docker smoke testinde ödeme zinciri (hold → onay → ödeme → bildirim, beş olaylık geçmiş) ve yarış RabbitMQ 4.3 üzerinden çalıştı; API ve Worker loglarında `fail`/`crit` yok.
+  - **Bilinen uyarı (bilinçli):** RabbitMQ açılışta `management_metrics_collection` için bir eskimiş özellik uyarısı yazıyor; kaynağı RabbitMQ 4.x management eklentisinin istatistik toplama özelliği, yönetim arayüzü geliştirmede tam kullanılsın diye bilinçli olarak açık bırakıldı, imaj 4.3'e sabit.
 
 ## 3. Test durumu ve eksik kritik testler
 
@@ -185,6 +206,14 @@ Eksikler, öncelik sırasıyla:
 
 Doğrulama: her adımda `dotnet test`; 1. adım için Testcontainers ile eşzamanlılık testinin art arda çalıştırılması; 2. adım için temiz klonda `docker compose up --build` ve Swagger üzerinden register → login → rezervasyon → worker logunda event.
 
+## Sonradan bulunan: inbox aynı mesajı iki kez işleyebiliyordu (adım 5d sırasında bulundu ve düzeltildi)
+
+- **Belirti:** aynı mesaj aynı anda iki kez teslim edilince consumer iki kez çalışabiliyor (ölçüm: ısınmış Worker'da çiftlerin yaklaşık %6,5'i), ayrıca aynı outbox mesajı iki kez gönderilebiliyordu. Worker'da görünür sonucu: bir ödeme için iki `PaymentSucceeded`, bir iade talebi için iki `RefundCompleted`, bir onay için iki `NotificationSent`.
+- **Kök neden:** MassTransit 8.5.11 inbox satırını bir transaction'da ekleyip consumer'ı aynı `DbContext` üzerinde sonraki bir transaction'da çalıştırıyor; EF Core zaten izlediği nesneyi sorgu sonucuyla güncellemediği için `SELECT ... FOR UPDATE` bayat nesneyi (`Consumed = null`) döndürüyor. 8.5.11 son 8.x sürümü; `develop` dalında da aynı. İlgili: MassTransit issue 4474.
+- **Neden daha önce görünmedi:** mevcut test her seferinde yeni başlatılmış bir host kullandığı için iki teslim tam çakışmıyordu.
+- **Düzeltme:** (1) `InboxStateDetachInterceptor` (API ve Worker): her transaction bitiminde izlenen inbox satırları bırakılıyor. (2) Alan koruması: `SimulatedCharges.AnnouncedAt` ve `RefundedAt` üzerinde koşullu güncelleme; ödeme sonucu ve iade, inbox'tan bağımsız olarak bir kez yayınlanıyor. (3) Tahsilatı olmayan iade artık `RefundCompleted` değil `RefundFailed` ile kapanıyor. (4) Temizlik, sonucu duyurulmamış tahsilatı silmiyor; saklama süresi duyurudan sayılıyor.
+- **Kalan sınır:** bildirim yalnızca inbox'a (interceptor'a) dayanıyor. Sonucu duyurulduktan 7 günden sonra istenen iade tahsilatı bulamaz ve `RefundFailed` olur. Migration, yükseltme anındaki son bir saatin tahsilatlarını "duyurulmamış" bırakır; bu satırlar temizlenmez.
+
 ## Ertelenen yükseltmeler
 
 net10.0 geçişinde aşağıdaki üç paket bilerek en güncel büyük sürüme çıkarılmadı. O adımın kuralı davranış değişikliği ve refactor yapmamaktı; üçü de bu kuralı zorluyordu.
@@ -197,6 +226,9 @@ net10.0 geçişinde aşağıdaki üç paket bilerek en güncel büyük sürüme 
 
 Sıra:
 
-- **StackExchange.Redis 3.x:** kilit testleri (bölüm 3, madde 1–4) yazıldıktan sonra yapılacak. Böylece K1–K3 düzeltmeleri bilinen bir istemci sürümünde doğrulanır ve yükseltmenin kilit davranışını bozup bozmadığı testlerle görülür.
-- **Swashbuckle 10.x:** `Program.cs` zaten değişeceği için CORS, rate limiting ve SignalR işleriyle birlikte; D6 (güvenlik şemasının `Http`/`bearer` yapılması) aynı anda çözülebilir.
+- **StackExchange.Redis 3.x:** yapıldı, 3.3.1'e yükseltildi.
+  - Kod değişikliği gerekmedi: 3.0 IO çekirdeğini yeniden yazdı ama API'yi korudu; 3.1'in derleme hatasına çevirdiği eskimiş API'leri kullanmıyorduk; `-warnaserror` build'i temiz. `Pipelines.Sockets.Unofficial` bağımlılığı kalktı.
+  - 3.x'in varsayılan protokolü RESP3 ve bu kabul edildi: testlerde ve compose'da Redis 8.10.2 (o zaman `redis:alpine`, şimdi `redis:8.10-alpine`), kullandığımız komutların (SET NX PX, EVAL, EXISTS) sonucu iki protokolde aynı.
+  - Doğrulama: kilit, eşzamanlılık, Redis'siz çalışma ve simülasyon testleri 5 kez tekrarlandı; tam suite yeşil. Docker smoke testinde iki script de aynı sonucu verdi: yarışta 1 kazanan ve 19 `seat_locked/busy`; Redis durdurulunca kilitsiz hold, başlatılınca kilidin geri gelmesi; `fail`/`crit` log satırı yok.
+- **Swashbuckle 10.x:** yapıldı (adım 5d, alt adım A): 10.2.3'e yükseltildi, Swagger kurulumu Microsoft.OpenApi 2'ye göre yeniden yazıldı. D6 da kapandı: güvenlik şeması `http`/`bearer`, ve yalnızca token isteyen endpoint'lere uygulanıyor (`AuthorizeOperationFilter`). `SwaggerTests` bunu ve Swagger'ın yalnızca Development'ta açık olduğunu doğruluyor.
 - **xunit.runner.visualstudio 4.x:** xunit v3'e geçiş değerlendirilirken, test altyapısı işleriyle birlikte.

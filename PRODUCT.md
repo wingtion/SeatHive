@@ -13,7 +13,7 @@ React + Vite + TypeScript single-page app in `/frontend` of this repo.
 - Talks to the SeatHive API over HTTP with JWT bearer auth.
 - Live seat updates over SignalR via `@microsoft/signalr`.
 - Deployed as a static site on Netlify, not as a Docker container.
-- The API, worker, Postgres, Redis and RabbitMQ stay in Docker Compose on the server.
+- The API, worker, Postgres, Redis and RabbitMQ stay in Docker Compose on the server, behind Caddy, which terminates HTTPS (Let's Encrypt for the API's domain) and is the only service reachable from outside. The front end calls the API and its SignalR hub at that HTTPS address.
 - Local development runs the Vite dev server with a proxy to the API.
 
 ## Users
@@ -40,41 +40,37 @@ A working seat-booking flow with its own "under the hood" layer beside it. The c
 
 - Evaluators typically arrive from a CV, GitHub profile or the README, and may never clone the repo or open Swagger.
 - Today the only way to see the system work is Swagger at `http://localhost:8080/swagger` after `docker-compose up -d --build`, calling `POST /api/setup/create-data` then `POST /api/simulation/simulate-concurrency`.
-- The whole backend runs from one Docker Compose file: API, worker, Postgres, Redis, RabbitMQ.
+- The whole backend runs from one Docker Compose file: API, worker, Postgres, Redis, RabbitMQ, and Caddy in front of the API on a server. Nothing is deployed yet.
 
 ## Capabilities and Constraints
 
 Implemented today:
 
 - `POST /api/auth/register` and `POST /api/auth/login` (email + password, returns a JWT).
-- `POST /api/booking` (authenticated; the user ID is taken from the token, never from the request body).
-- `POST /api/setup/create-data`: drops and recreates the database, seeds one event with 100 seats (sections A and B, row 1, seats 1–50 each).
-- `POST /api/simulation/simulate-concurrency`: 20 concurrent bookings of seat #1; returns total, successful and failed counts.
-- Booking takes a Redis lock on `lock:seat:{id}` (single-instance `SET NX` with a 10 second expiry), marks the seat booked in Postgres, publishes `BookingCreatedEvent` (SeatId, UserId, CreatedAt) through MassTransit/RabbitMQ, then releases the lock.
-- The worker consumes `BookingCreatedEvent` and simulates slow ticket/email processing with a 2 second delay; it only logs.
-- Booking outcomes are plain strings: "Booking successful!", "Seat is already booked.", "Seat not found.", "System busy.".
-- Data model: Event (name, date), Seat (section, row, seat number, booked flag, user, version), User (email, password hash).
-
-Planned backend work the interface depends on (confirmed direction, not yet built):
-
-- seat holds with a real, user-visible TTL (today the lock lives only for the duration of one request);
-- a simulated payment step between booking and notification;
-- a SignalR hub for live seat and system events;
-- read endpoints for events and seats;
-- CORS for the Netlify origin.
+- `POST /api/booking/hold`, `POST /api/booking/{id}/confirm` and `POST /api/booking/{id}/release` (authenticated; the user ID is taken from the token, never from the request body).
+- `POST /api/setup/create-data` (Admin only): clears events, seats and bookings, keeps users, seeds one event with 100 seats (sections A and B, row 1, seats 1–50 each). Seat and event ids start at 1 again; booking ids are never reused.
+- `POST /api/simulation/simulate-concurrency` (any signed-in user, 5 per minute, one race at a time): racers (2–50, 20 by default), each a racer account of its own, try to hold one seat (given, or the first free one) at the same moment through the real hold logic. The report lists every attempt: racer number, `won` or `rejected`, the code (`seat_locked` or `seat_held`), what happened at the lock (`acquired`, `busy`, `unavailable`) and timings in milliseconds; no user ids. The winner keeps the seat for 10 seconds (configurable), then it is released through the normal release; until then a new race on that seat is refused (`seat_held_by_race` with `releasesAt`). Other refusals: `race_in_progress`, `racers_busy`, `seat_held`, `seat_already_booked`, `seat_not_found`. Everyone watching the event gets the same report live as `raceFinished`.
+- Booking is hold, then pay, then confirm. `POST /api/booking/hold` takes a Redis lock on `lock:seat:{id}` (single-instance `SET NX` with a 10 second expiry), inserts a `Held` booking in Postgres that expires after 5 minutes (configurable; at most 4 active holds per user), then releases the lock. If Redis cannot be reached the hold goes on without the lock and the database's unique index alone decides (the loser of a race gets `seat_held` instead of `seat_locked`). `POST /api/booking/{id}/confirm` turns the owner's unexpired hold into `PaymentPending`, answers `202` and publishes `PaymentRequested`; an optional body `{ "simulatePaymentFailure": true }` makes that payment fail. `POST /api/booking/{id}/release` gives the hold up. Holds that ran out are marked `Expired` on the next hold attempt for that seat and by a background sweeper (every 5 seconds, configurable); a booking waiting for its payment gets a 30 second grace period on top.
+- The worker simulates the payment (1 to 3 seconds, 20% random failures, one charge per payment attempt) and answers with `PaymentSucceeded` or `PaymentFailed`. On success the API marks the booking `Confirmed` and publishes `BookingConfirmed`; the worker then simulates a notification and publishes `NotificationSent`. On failure the booking is `Held` again. A payment that succeeds for a booking that can no longer be confirmed leads to `RefundRequested`, and the worker publishes `RefundCompleted`, or `RefundFailed` (`charge_not_found`, `charge_not_successful`) when the simulated provider has no successful charge to give back. A payment result is announced once and a charge is refunded once, however often the message arrives. Nothing real happens: no money moves and no email is sent.
+- Events (`SeatHeld`, `HoldReleased`, `HoldExpired`, `PaymentRequested`, `PaymentSucceeded`, `PaymentFailed`, `BookingConfirmed`, `RefundRequested`, `RefundCompleted`, `RefundFailed`, `NotificationSent`) all carry BookingId, SeatId, UserId and a timestamp, and go through MassTransit/RabbitMQ with a transactional outbox and inbox.
+- Booking outcomes: success returns JSON with `bookingId`, `seatId`, `status` and, for a hold, `expiresAt` (for a confirm, `confirmedAt`, which is null while the payment is pending). Errors are `application/problem+json` with a machine-readable `code`: `seat_not_found` (404), `seat_already_booked` (409), `seat_held` (409), `seat_locked` (409), `hold_limit_reached` (409), `hold_expired` (410), `hold_not_active` (409), `payment_in_progress` (409), `booking_not_found` (404), `not_hold_owner` (403), `validation_failed` (400), `invalid_token` (401).
+- Read endpoints: `GET /api/events`, `GET /api/events/{id}` and `GET /api/events/{id}/seats` need no token; `GET /api/booking` and `GET /api/booking/{id}` return the caller's own bookings only (another user's booking is `403` `not_hold_owner`, for admins too). Lists are paged with `page` and `pageSize` and answer `{ items, page, pageSize, totalCount }`. A seat is `{ seatId, section, row, seatNumber, status, heldUntil }` with status `available`, `held` or `booked`; it never says who holds the seat. In JSON every status is a camelCase string (`held`, `paymentPending`, `confirmed`, `expired`, `released`). Further error codes: `event_not_found` (404), `unauthorized` (401), `forbidden` (403), `rate_limited` (429), `internal_error` (500, no details).
+- Booking history: `GET /api/booking/{id}/history` (owner only, paged) lists the events that really happened to a booking, each as `{ eventId, sequence, type, occurredAt, paymentId, detail, simulated }`. The types are the event names in camelCase (`seatHeld`, `paymentRequested`, `paymentSucceeded`, `paymentFailed`, `bookingConfirmed`, `notificationSent`, `holdReleased`, `holdExpired`, `refundRequested`, `refundCompleted`, `refundFailed`). Rows are written from the events on the bus, one per event, ordered by the time the event carries; payments, refunds and notifications have `simulated: true`. It follows the change by about a second. A reset of the demo data deletes it.
+- Live updates: a SignalR hub at `/hubs/seats` (token required; the client sends it as `access_token`). `JoinEvent(eventId)` / `LeaveEvent(eventId)` choose which event to watch; `JoinEvent` answers `{ joined, error }` (`joined: false`, `error: "event_not_found"` for an unknown event). It also sends `raceFinished` (the race report) to everyone watching the race's event. It sends `seatStatusChanged` `{ eventId, seatId, status, heldUntil }` to everyone watching that event, `bookingEvent` `{ eventId, bookingId, seatId, type, occurredAt, paymentId, detail, simulated }` to the owner of a booking only, and `demoDataReset` to everyone. Every message comes from an event that went through the outbox and the bus, so it follows the change by about a second, and a `bookingEvent` can arrive twice (same `eventId`). A hold that runs out is announced when the sweeper marks it, up to 5 seconds late; `heldUntil` lets the client count down itself.
+- CORS: a browser may call the API and connect to the hub only from the configured origins (exact origins, never `*`, credentials allowed, `GET` and `POST`). On a server that is the Netlify production origin, set as `CORS_ALLOWED_ORIGIN`; locally (Development) it is the Vite dev server, `http://localhost:5173`. The WebSocket handshake is checked against the same list.
+- Data model: Event (name, date), Seat (section, row, seat number; no booked flag), Booking (seat, user, status `Held`/`PaymentPending`/`Confirmed`/`Expired`/`Released`, payment attempt id, created/expires/confirmed timestamps), User (email, password hash, role). A seat is taken while it has a `Held`, `PaymentPending` or `Confirmed` booking; a partial unique index allows at most one of those per seat.
 
 Constraints:
 
-- The interface shows only real system state. Until the planned backend work exists, the matching UI is not faked with client-side telemetry.
+- The interface shows only real system state. Nothing is faked with client-side telemetry.
 - Payment is simulated; no real payment provider.
 
 Undecided:
 
 - Whether the public deployment has an always-on backend to connect to, or is run locally by evaluators.
 - How the destructive `create-data` reset is exposed, if at all, in a shared deployment.
-- Simulation parameters beyond the fixed 20 users on seat #1.
 
-The README now matches the code and can be used as the source for UI copy: the lock is a token-owned single-instance Redis lock (`SET NX`, released by a Lua script) backed by a conditional database update, not Redlock, and the roles are `User` and `Admin`.
+The README now matches the code and can be used as the source for UI copy: the lock is a token-owned single-instance Redis lock (`SET NX`, released by a Lua script) backed by a partial unique index on active bookings, not Redlock, and the roles are `User` and `Admin`.
 
 ## Brand Commitments
 

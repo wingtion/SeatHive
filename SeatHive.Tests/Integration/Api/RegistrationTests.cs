@@ -3,7 +3,8 @@ using System.Net.Http.Json;
 
 namespace SeatHive.Tests.Integration.Api
 {
-    [Collection(ContainersCollection.Name)]
+    [Collection(TestCollections.ApiRead)]
+    [Trait(TestCategories.Trait, TestCategories.Api)]
     public class RegistrationTests
     {
         private readonly ContainersFixture _fixture;
@@ -23,8 +24,7 @@ namespace SeatHive.Tests.Integration.Api
             var second = await ApiFactory.RegisterAsync(client, email.ToUpperInvariant(), "Passw0rd!");
 
             Assert.Equal(HttpStatusCode.OK, first.StatusCode);
-            Assert.Equal(HttpStatusCode.BadRequest, second.StatusCode);
-            Assert.Equal("User already exists.", await second.Content.ReadAsStringAsync());
+            Assert.Equal(HttpStatusCode.Conflict, second.StatusCode);
 
             // Login is case-insensitive too.
             await ApiFactory.LoginAsync(client, email.ToUpperInvariant(), "Passw0rd!");
@@ -40,7 +40,7 @@ namespace SeatHive.Tests.Integration.Api
                 .Select(_ => ApiFactory.RegisterAsync(client, email, "Passw0rd!")));
 
             Assert.Equal(1, responses.Count(r => r.StatusCode == HttpStatusCode.OK));
-            Assert.Equal(9, responses.Count(r => r.StatusCode == HttpStatusCode.BadRequest));
+            Assert.Equal(9, responses.Count(r => r.StatusCode == HttpStatusCode.Conflict));
         }
 
         public static TheoryData<string, string, string> InvalidRegistrations => new()
@@ -86,7 +86,7 @@ namespace SeatHive.Tests.Integration.Api
         {
             var client = await _fixture.Api.CreateUserClientAsync();
 
-            var response = await client.PostAsJsonAsync("/api/Booking", new { seatId });
+            var response = await client.PostAsJsonAsync("/api/Booking/hold", new { seatId });
 
             Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
             Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);

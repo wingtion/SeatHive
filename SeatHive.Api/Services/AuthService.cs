@@ -9,6 +9,12 @@ using SeatHive.Api.Models;
 
 namespace SeatHive.Api.Services
 {
+    public enum RegisterResult
+    {
+        Registered,
+        EmailAlreadyRegistered
+    }
+
     public class AuthService
     {
         private readonly AppDbContext _context;
@@ -24,12 +30,12 @@ namespace SeatHive.Api.Services
         public static string NormalizeEmail(string email) => email.Trim().ToLowerInvariant();
 
         // 1. REGISTER
-        public async Task<string> RegisterAsync(string email, string password)
+        public async Task<RegisterResult> RegisterAsync(string email, string password)
         {
             email = NormalizeEmail(email);
 
             if (await _context.Users.AnyAsync(u => u.Email == email))
-                return "User already exists.";
+                return RegisterResult.EmailAlreadyRegistered;
 
             var user = new User
             {
@@ -47,10 +53,10 @@ namespace SeatHive.Api.Services
             catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
             {
                 // Another request registered the same email between our check and our insert.
-                return "User already exists.";
+                return RegisterResult.EmailAlreadyRegistered;
             }
 
-            return "User registered successfully.";
+            return RegisterResult.Registered;
         }
 
         // 2. LOGIN
