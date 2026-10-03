@@ -1,5 +1,5 @@
 import { AuthProvider } from './auth/AuthProvider'
-import { EventOverview } from './components/EventOverview'
+import { EventBoard } from './components/EventBoard'
 import { Header } from './components/Header'
 
 export default function App() {
@@ -7,7 +7,7 @@ export default function App() {
     <AuthProvider>
       <Header />
       <main className="mx-auto max-w-[1400px] px-4 py-8 sm:px-6 sm:py-10">
-        <EventOverview />
+        <EventBoard />
       </main>
     </AuthProvider>
   )

@@ -1,0 +1,271 @@
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { confirmBooking, getMyBookings, holdSeat, releaseBooking, type Booking } from '../api/bookings'
+import { ApiError, NETWORK_ERROR } from '../api/client'
+import { getEvents, getSeats, type EventSummary, type Seat } from '../api/events'
+import { useAuth } from '../auth/context'
+import { watchEvent, type BookingEventMessage, type LiveStatus } from '../live/seatHub'
+import { applyBookingEvent, applySeatChange } from './boardState'
+import { describeBookingFailure, isSignedOut } from './messages'
+
+type Load =
+  | { kind: 'loading' }
+  | { kind: 'failed'; message: string }
+  | { kind: 'empty' }
+  | { kind: 'ready'; event: EventSummary }
+
+export interface EventBoard {
+  load: Load
+  seats: Seat[]
+  // The signed-in person's own bookings, newest first; empty when nobody is signed in.
+  bookings: Booking[]
+  live: LiveStatus
+  // Something the person should know that is nobody's fault: the data was reset, the session ended.
+  notice: string | null
+  dismissNotice: () => void
+  retry: () => void
+  busySeats: ReadonlySet<number>
+  busyBookings: ReadonlySet<number>
+  seatError: { seatId: number; message: string } | null
+  bookingErrors: Readonly<Record<number, string>>
+  // The latest thing the API said happened to a booking, by booking id.
+  lastEvents: Readonly<Record<number, BookingEventMessage>>
+  hold: (seatId: number) => Promise<void>
+  confirm: (bookingId: number, simulatePaymentFailure: boolean) => Promise<void>
+  release: (bookingId: number) => Promise<void>
+}
+
+// The event, its seats and the person's bookings, kept current: read over HTTP, then changed by what the hub sends.
+export function useEventBoard(): EventBoard {
+  const { session, signOut } = useAuth()
+  const token = session?.token ?? null
+
+  const [load, setLoad] = useState<Load>({ kind: 'loading' })
+  const [seats, setSeats] = useState<Seat[]>([])
+  // Kept with the token they were read for, so one person's bookings are never shown to the next.
+  const [own, setOwn] = useState<{ owner: string | null; items: Booking[] }>({ owner: null, items: [] })
+  const [connection, setConnection] = useState<LiveStatus>('off')
+  const [notice, setNotice] = useState<string | null>(null)
+  const [reloads, setReloads] = useState(0)
+  const [busySeats, setBusySeats] = useState<ReadonlySet<number>>(new Set())
+  const [busyBookings, setBusyBookings] = useState<ReadonlySet<number>>(new Set())
+  const [seatError, setSeatError] = useState<EventBoard['seatError']>(null)
+  const [bookingErrors, setBookingErrors] = useState<Record<number, string>>({})
+  const [lastEvents, setLastEvents] = useState<Record<number, BookingEventMessage>>({})
+
+  const eventId = load.kind === 'ready' ? load.event.id : null
+  const bookings = token !== null && own.owner === token ? own.items : NO_BOOKINGS
+  // There is a connection only for a signed-in person on an event that exists.
+  const live = token !== null && eventId !== null ? connection : 'off'
+
+  // Read by callbacks that outlive a render (hub handlers), so they never act for an earlier session or event.
+  const current = useRef({ token, eventId, bookings })
+  useEffect(() => {
+    current.current = { token, eventId, bookings }
+  }, [token, eventId, bookings])
+
+  const endSession = useCallback(() => {
+    signOut()
+    setNotice('Your session has ended. Continue as a guest or sign in to go on.')
+  }, [signOut])
+
+  // The event and its seats. Readable without a token.
+  useEffect(() => {
+    const abort = new AbortController()
+
+    async function read() {
+      try {
+        const event = (await getEvents(abort.signal)).items[0]
+        if (!event) {
+          setSeats([])
+          setLoad({ kind: 'empty' })
+          return
+        }
+
+        const page = await getSeats(event.id, abort.signal)
+        setSeats(page.items)
+        setLoad({ kind: 'ready', event })
+      } catch (error) {
+        if (abort.signal.aborted) return
+        setLoad({ kind: 'failed', message: describeLoadFailure(error) })
+      }
+    }
+
+    void read()
+    return () => abort.abort()
+  }, [reloads])
+
+  const refreshSeats = useCallback(async () => {
+    const id = current.current.eventId
+    if (id === null) return
+
+    try {
+      const page = await getSeats(id)
+      if (current.current.eventId === id) setSeats(page.items)
+    } catch {
+      // The seats on screen stay; the hub or the next action brings them up to date.
+    }
+  }, [])
+
+  const refreshBookings = useCallback(async () => {
+    const asked = current.current.token
+    if (!asked) return
+
+    try {
+      const page = await getMyBookings(asked)
+      if (current.current.token === asked) setOwn({ owner: asked, items: page.items })
+    } catch (error) {
+      if (isSignedOut(error) && current.current.token === asked) endSession()
+    }
+  }, [endSession])
+
+  // The person's own bookings: read when they sign in and after a reload.
+  useEffect(() => {
+    if (!token) return
+
+    const abort = new AbortController()
+    getMyBookings(token, abort.signal)
+      .then((page) => setOwn({ owner: token, items: page.items }))
+      .catch((error: unknown) => {
+        if (abort.signal.aborted) return
+        if (isSignedOut(error)) endSession()
+      })
+    return () => abort.abort()
+  }, [token, reloads, endSession])
+
+  // Live updates, for a signed-in person on an event that exists.
+  useEffect(() => {
+    if (!token || eventId === null) return
+
+    return watchEvent(token, eventId, {
+      onStatus: setConnection,
+      onSeatChanged: (change) => setSeats((seatsNow) => applySeatChange(seatsNow, change)),
+      onBookingEvent: (message) => {
+        setLastEvents((events) => ({ ...events, [message.bookingId]: message }))
+
+        // The event says what the booking is now; only a booking not seen before is read from the API.
+        const known = applyBookingEvent(current.current.bookings, message)
+        if (known === null) void refreshBookings()
+        else setOwn((ownNow) => ({ owner: ownNow.owner, items: applyBookingEvent(ownNow.items, message) ?? ownNow.items }))
+      },
+      onDemoDataReset: () => {
+        setNotice('The demo data was reset: every booking is gone and all seats are free again.')
+        setSeatError(null)
+        setBookingErrors({})
+        setLastEvents({})
+        setReloads((count) => count + 1)
+      },
+      onResync: () => {
+        void refreshSeats()
+        void refreshBookings()
+      },
+    })
+  }, [token, eventId, refreshBookings, refreshSeats])
+
+  const hold = useCallback(
+    async (seatId: number) => {
+      if (!token) return
+
+      setSeatError(null)
+      setBusySeats((busy) => new Set(busy).add(seatId))
+      try {
+        const held = await holdSeat(token, seatId)
+        // Shown at once; the hub confirms it about a second later.
+        setSeats((seatsNow) => applySeatChange(seatsNow, { seatId, status: 'held', heldUntil: held.expiresAt }))
+        await refreshBookings()
+      } catch (error) {
+        if (isSignedOut(error)) {
+          endSession()
+        } else {
+          setSeatError({ seatId, message: describeBookingFailure(error) })
+          // Being turned away means the seat is not what the screen showed.
+          void refreshSeats()
+        }
+      } finally {
+        setBusySeats((busy) => without(busy, seatId))
+      }
+    },
+    [token, refreshBookings, refreshSeats, endSession],
+  )
+
+  const act = useCallback(
+    async (bookingId: number, action: (token: string) => Promise<void>) => {
+      if (!token) return
+
+      setBookingErrors((errors) => withoutKey(errors, bookingId))
+      setBusyBookings((busy) => new Set(busy).add(bookingId))
+      try {
+        await action(token)
+        await Promise.all([refreshBookings(), refreshSeats()])
+      } catch (error) {
+        if (isSignedOut(error)) {
+          endSession()
+        } else {
+          setBookingErrors((errors) => ({ ...errors, [bookingId]: describeBookingFailure(error) }))
+          void refreshBookings()
+        }
+      } finally {
+        setBusyBookings((busy) => without(busy, bookingId))
+      }
+    },
+    [token, refreshBookings, refreshSeats, endSession],
+  )
+
+  const confirm = useCallback(
+    (bookingId: number, simulatePaymentFailure: boolean) =>
+      act(bookingId, (asToken) => confirmBooking(asToken, bookingId, simulatePaymentFailure)),
+    [act],
+  )
+
+  const release = useCallback(
+    (bookingId: number) => act(bookingId, (asToken) => releaseBooking(asToken, bookingId)),
+    [act],
+  )
+
+  const retry = useCallback(() => {
+    setLoad({ kind: 'loading' })
+    setReloads((count) => count + 1)
+  }, [])
+
+  const dismissNotice = useCallback(() => setNotice(null), [])
+
+  return {
+    load,
+    seats,
+    bookings,
+    live,
+    notice,
+    dismissNotice,
+    retry,
+    busySeats,
+    busyBookings,
+    seatError,
+    bookingErrors,
+    lastEvents,
+    hold,
+    confirm,
+    release,
+  }
+}
+
+const NO_BOOKINGS: Booking[] = []
+
+function without(set: ReadonlySet<number>, value: number): ReadonlySet<number> {
+  const next = new Set(set)
+  next.delete(value)
+  return next
+}
+
+function withoutKey(record: Record<number, string>, key: number): Record<number, string> {
+  const { [key]: _removed, ...rest } = record
+  return rest
+}
+
+function describeLoadFailure(error: unknown): string {
+  if (error instanceof ApiError && error.code === NETWORK_ERROR) {
+    return 'The server could not be reached. Check your connection, then try again.'
+  }
+  if (error instanceof ApiError && error.code === 'rate_limited') {
+    return 'Too many requests in a short time. Wait a minute, then try again.'
+  }
+  return 'Something went wrong on the server. Try again.'
+}

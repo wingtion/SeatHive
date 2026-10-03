@@ -35,7 +35,7 @@ export function Header() {
         {session ? (
           <div className="flex items-center gap-4">
             <p className="flex min-w-0 items-center gap-2 text-sm">
-              <span className="truncate" title={session.email}>
+              <span className="truncate">
                 {displayName(session)}
               </span>
               {session.role === 'Admin' && (

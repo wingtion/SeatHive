@@ -63,6 +63,15 @@
   --radius-control: 4px;
 }
 
+/* A seat someone else holds: amber, but hatched, so it reads as "held" without looking like your own. */
+@utility seat-hatch {
+  background-image: repeating-linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--hold) 45%, transparent) 0 2px,
+    transparent 2px 5px
+  );
+}
+
 @layer base {
   html {
     background: var(--bg);

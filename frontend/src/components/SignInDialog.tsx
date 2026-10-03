@@ -43,7 +43,11 @@ export function SignInDialog({ open, onClose }: SignInDialogProps) {
     const element = dialog.current
     if (!element) return
 
-    if (open && !element.open) element.showModal()
+    if (open && !element.open) {
+      element.showModal()
+      // Otherwise the dialog puts the focus on its first control, the close button.
+      element.querySelector<HTMLInputElement>('input[name="email"]')?.focus()
+    }
     if (!open && element.open) element.close()
   }, [open])
 
