@@ -73,7 +73,7 @@ Projenin ana iddiası olan "20 istekten yalnızca 1'i başarılı olur" kodda ga
   - Cevap her denemeyi raporlar: sonuç, kod, kilit durumu (hold içinde ölçülür) ve süre. Aynı rapor outbox → bus → hub yoluyla `raceFinished` olarak yayınlanır.
   - Kazanan 10 sn tutar (`Simulation:WinnerHoldSeconds`), sonra gerçek release yoluyla bırakılır. Bu arada aynı koltukta yarış `seat_held_by_race` ile reddedilir; bırakma kaybolursa TTL devreye girer.
   - Testler: 20 test, yarış testleri 5 kez tekrarlandı. Docker smoke testinde 1 kazanan ve 19 `seat_locked/busy`; bırakma çalıştı; Redis kapalıyken 19 `seat_held/unavailable`.
-  - Yan bulgu (açık): Redis kapalıyken veritabanının reddettiği her hold (unique index, 23505), kod tarafından doğru şekilde `seat_held` olarak ele alınsa da EF Core tarafından `fail` seviyesinde loglanıyor.
+  - Yan bulgu (kapandı): Redis kapalıyken veritabanının reddettiği her hold (unique index, 23505), kod tarafından doğru şekilde `seat_held` olarak ele alınsa da EF Core tarafından `fail` seviyesinde loglanıyordu (her kayıp için `Command[20102]` + `Update[10000]`). Hold artık partial index'e karşı `INSERT ... ON CONFLICT ... DO NOTHING RETURNING *` ile yazılıyor; satır dönmezse `seat_held`. Kırmızı test önce 25 turda 475 başarısız komut saydı (EF interceptor'ı), şimdi 0; Redis açıkken de 0.
 
 **Y4. Şema hiç migrate edilmiyor**
 - Yer: `SeatHive.Api/Program.cs` (`Migrate()` yok), `SetupController.cs:21`, `Migrations/20260215132940_AddUsersTable.cs`

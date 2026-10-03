@@ -32,6 +32,7 @@ namespace SeatHive.Tests.Integration
 
         // Without Redis the holds go on without the lock, and the database alone decides: still exactly one hold,
         // and everyone else is told that the seat is held (the lock, which would say "locked", is not there).
+        // The database turns the others away without a failed command: losing a race is not an error.
         [Fact]
         public async Task ConcurrentHoldsForSameSeat_ShouldProduceExactlyOneHold_WhenRedisIsDown()
         {
@@ -46,6 +47,7 @@ namespace SeatHive.Tests.Integration
         {
             var failedRounds = new List<string>();
             var clock = new FakeTimeProvider(DateTimeOffset.UtcNow);
+            var failedCommands = new FailedCommandCounter();
 
             for (var round = 1; round <= Rounds; round++)
             {
@@ -56,7 +58,7 @@ namespace SeatHive.Tests.Integration
 
                 var attempts = users.Select(userId => Task.Run(async () =>
                 {
-                    await using var db = _fixture.CreateContext();
+                    await using var db = _fixture.CreateContext(failedCommands);
                     var service = _fixture.CreateBookingService(db, clock, lockService, bus.Object);
                     var result = await service.HoldSeatAsync(seatId, userId);
                     return (userId, result);
@@ -89,6 +91,8 @@ namespace SeatHive.Tests.Integration
 
             Assert.True(failedRounds.Count == 0,
                 $"{failedRounds.Count}/{Rounds} rounds broke the one-winner guarantee:\n" + string.Join("\n", failedRounds));
+            Assert.True(failedCommands.Failures.Count == 0,
+                $"{failedCommands.Failures.Count} database commands failed, for example: {failedCommands.Failures.FirstOrDefault()}");
         }
     }
 }

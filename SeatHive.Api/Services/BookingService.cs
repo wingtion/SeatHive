@@ -2,7 +2,6 @@ using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
-using Npgsql;
 using SeatHive.Api.Data;
 using SeatHive.Api.Models;
 using SeatHive.Shared.Events;
@@ -123,28 +122,24 @@ namespace SeatHive.Api.Services
                 && ((b.Status == BookingStatus.Held && b.ExpiresAt > now) || b.Status == BookingStatus.PaymentPending));
             if (activeHolds >= _options.MaxActivePerUser) return BookingResult.Failure(BookingError.HoldLimitReached);
 
-            var booking = new Booking
-            {
-                SeatId = seatId,
-                UserId = userId,
-                Status = BookingStatus.Held,
-                CreatedAt = now,
-                ExpiresAt = now.AddSeconds(_options.DurationSeconds)
-            };
-            _context.Bookings.Add(booking);
+            var expiresAt = now.AddSeconds(_options.DurationSeconds);
 
-            try
-            {
-                await _context.SaveChangesAsync();
-            }
-            catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation })
-            {
-                // The database is the source of truth: its unique index allows one active booking per seat.
-                // We get here if someone else took the seat since we checked, for example because the lock failed.
-                return BookingResult.Failure(BookingError.SeatHeld);
-            }
+            // The database is the source of truth: its unique index allows one active booking per seat. If someone
+            // else took the seat since we checked (the lock failed, or Redis is down), the insert does nothing and
+            // returns no row. Losing that race is an answer, not an error, so it does not fail a command (which
+            // would be logged as a database failure). The conflict target is the partial unique index on SeatId;
+            // its condition must stay the same as the filter in AppDbContext.
+            var inserted = await _context.Bookings.FromSql($"""
+                INSERT INTO "Bookings" ("SeatId", "UserId", "Status", "CreatedAt", "ExpiresAt")
+                VALUES ({seatId}, {userId}, 'Held', {now}, {expiresAt})
+                ON CONFLICT ("SeatId") WHERE "Status" IN ('Held', 'PaymentPending', 'Confirmed') DO NOTHING
+                RETURNING *
+                """).AsNoTracking().ToListAsync();
 
-            await _publishEndpoint.Publish(new SeatHeld(booking.Id, seatId, userId, now, booking.ExpiresAt.Value));
+            var booking = inserted.SingleOrDefault();
+            if (booking == null) return BookingResult.Failure(BookingError.SeatHeld);
+
+            await _publishEndpoint.Publish(new SeatHeld(booking.Id, seatId, userId, now, expiresAt));
             await SaveAndCommitAsync(transaction);
 
             return BookingResult.Success(booking);
