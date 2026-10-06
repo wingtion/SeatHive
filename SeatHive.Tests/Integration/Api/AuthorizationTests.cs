@@ -78,6 +78,31 @@ namespace SeatHive.Tests.Integration.Api
         }
 
         [Fact]
+        public async Task Reset_ShouldSeedAHall_OfTenRowsOfTenSeats_InThreeBlocks()
+        {
+            var ct = TestContext.Current.CancellationToken;
+            var admin = await _fixture.Api.CreateAdminClientAsync();
+
+            (await admin.PostAsync(ResetUrl, null, ct)).EnsureSuccessStatusCode();
+
+            await using var db = _fixture.CreateContext();
+            var seats = await db.Seats.AsNoTracking().OrderBy(s => s.Id).ToListAsync(ct);
+
+            // Rows A to J, each with the seats 1 to 10: 1-3 on the left, 4-7 in the centre, 8-10 on the right.
+            var rows = seats.GroupBy(s => s.Row).OrderBy(g => g.Key).ToList();
+            Assert.Equal(new[] { "A", "B", "C", "D", "E", "F", "G", "H", "I", "J" }, rows.Select(g => g.Key));
+            Assert.All(rows, row =>
+            {
+                Assert.Equal(Enumerable.Range(1, 10), row.Select(s => s.SeatNumber).Order());
+                Assert.All(row, s => Assert.Equal(s.SeatNumber <= 3 ? "Left" : s.SeatNumber <= 7 ? "Centre" : "Right", s.Section));
+            });
+
+            // The lowest id is the first free seat a race takes: the centre of the front row.
+            Assert.Equal(("A", 4, "Centre"), (seats[0].Row, seats[0].SeatNumber, seats[0].Section));
+            Assert.Equal(new[] { 4, 5, 6, 7, 1, 2, 3, 8, 9, 10 }, seats.Take(10).Select(s => s.SeatNumber));
+        }
+
+        [Fact]
         public async Task Token_ShouldCarryRoleClaim()
         {
             var client = _fixture.Api.CreateClient();

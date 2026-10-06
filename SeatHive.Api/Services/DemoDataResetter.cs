@@ -76,25 +76,17 @@ namespace SeatHive.Api.Services
                 cancellationToken);
 
             // 2. Create Event
-            var concert = new Event
+            var performance = new Event
             {
                 Name = "Evening Performance",
                 Date = DateTime.UtcNow.AddDays(30)
             };
-            _context.Events.Add(concert);
+            _context.Events.Add(performance);
             await _context.SaveChangesAsync(cancellationToken);
 
-            // 3. Create 100 Seats
-            var seats = new List<Seat>();
-            for (int i = 1; i <= 50; i++)
-            {
-                seats.Add(new Seat { Section = "A", Row = "1", SeatNumber = i, EventId = concert.Id });
-            }
-            for (int i = 1; i <= 50; i++)
-            {
-                seats.Add(new Seat { Section = "B", Row = "1", SeatNumber = i, EventId = concert.Id });
-            }
-
+            // 3. Create 100 Seats: a hall of ten rows (A at the stage, J at the back) of ten seats each,
+            // in three blocks with an aisle between them.
+            var seats = HallSeats(performance.Id);
             _context.Seats.AddRange(seats);
 
             // 4. Remove the guests nobody can be signed in as any more
@@ -108,6 +100,28 @@ namespace SeatHive.Api.Services
             await transaction.CommitAsync(cancellationToken);
 
             return new DemoResetResult(seats.Count, guestsRemoved);
+        }
+
+        // The seats of the hall, in the order they get their ids. Seats are numbered 1 to 10 across a row:
+        // 1-3 on the left, 4-7 in the centre, 8-10 on the right. The centre of each row comes first, front row
+        // first, so the lowest id (the first free seat a race takes) is in the middle of the front row.
+        private static List<Seat> HallSeats(int eventId)
+        {
+            (string Section, int From, int To)[] blocks = [("Centre", 4, 7), ("Left", 1, 3), ("Right", 8, 10)];
+
+            var seats = new List<Seat>();
+            foreach (var row in "ABCDEFGHIJ")
+            {
+                foreach (var (section, from, to) in blocks)
+                {
+                    for (var number = from; number <= to; number++)
+                    {
+                        seats.Add(new Seat { Section = section, Row = row.ToString(), SeatNumber = number, EventId = eventId });
+                    }
+                }
+            }
+
+            return seats;
         }
 
         // A guest whose token may still work is kept: its bookings are gone, but it can go on booking.
