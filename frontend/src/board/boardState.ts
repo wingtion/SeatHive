@@ -86,30 +86,39 @@ export function applyBookingEvent(
   )
 }
 
-export interface Section {
+// One row of the hall as it is drawn: its blocks from left to right, with an aisle between two blocks.
+export interface SeatRow {
   name: string
-  seats: Seat[]
+  blocks: Seat[][]
 }
 
-// Sections in alphabetical order, each with its seats in row and seat order.
-export function groupBySection(seats: Seat[]): Section[] {
-  const sections = new Map<string, Seat[]>()
+// The rows of the hall from the stage to the back, each with its seats in seat order. Seats of one section
+// that follow each other are a block; where the section changes there is an aisle. Nothing is known about the
+// hall but the section, row and number of each seat.
+export function groupByRow(seats: Seat[]): SeatRow[] {
+  const rows = new Map<string, Seat[]>()
   for (const seat of seats) {
-    const list = sections.get(seat.section) ?? []
+    const list = rows.get(seat.row) ?? []
     list.push(seat)
-    sections.set(seat.section, list)
+    rows.set(seat.row, list)
   }
 
-  return [...sections.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([name, list]) => ({
-      name,
-      seats: list.sort((a, b) => a.row.localeCompare(b.row, undefined, { numeric: true }) || a.seatNumber - b.seatNumber),
-    }))
+  return [...rows.entries()]
+    .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+    .map(([name, list]) => {
+      const blocks: Seat[][] = []
+      for (const seat of list.sort((a, b) => a.seatNumber - b.seatNumber || a.section.localeCompare(b.section))) {
+        const block = blocks[blocks.length - 1]
+        if (block && block[0].section === seat.section) block.push(seat)
+        else blocks.push([seat])
+      }
+      return { name, blocks }
+    })
 }
 
-export function seatLabel(seat: { section: string; seatNumber: number }): string {
-  return `${seat.section} ${seat.seatNumber}`
+// A seat as it is called in a hall: its row and its number in the row, "C7".
+export function seatLabel(seat: { row: string; seatNumber: number }): string {
+  return `${seat.row}${seat.seatNumber}`
 }
 
 // The API's timestamps are UTC. One without a zone would be read as local time by Date, so it is marked.

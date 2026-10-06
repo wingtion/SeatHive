@@ -8,8 +8,9 @@ import {
   bookingsBySeat,
   countSeats,
   formatRemaining,
-  groupBySection,
+  groupByRow,
   parseUtc,
+  seatLabel,
   seatView,
 } from './boardState'
 
@@ -112,12 +113,39 @@ describe('applyBookingEvent', () => {
   })
 })
 
-describe('groupBySection', () => {
-  it('orders sections by name and seats by number', () => {
-    const sections = groupBySection([seat(52, 'available', 'B', 2), seat(10, 'available', 'A', 10), seat(2, 'available', 'A', 2)])
+describe('groupByRow', () => {
+  function hallSeat(seatId: number, row: string, seatNumber: number, section: string): Seat {
+    return { seatId, section, row, seatNumber, status: 'available', heldUntil: null }
+  }
 
-    expect(sections.map((s) => s.name)).toEqual(['A', 'B'])
-    expect(sections[0].seats.map((s) => s.seatNumber)).toEqual([2, 10])
+  it('orders rows from the stage back and seats by number, whatever order they arrive in', () => {
+    const rows = groupByRow([
+      hallSeat(11, 'B', 2, 'Left'),
+      hallSeat(3, 'A', 5, 'Centre'),
+      hallSeat(1, 'A', 4, 'Centre'),
+      hallSeat(2, 'A', 1, 'Left'),
+      hallSeat(10, 'B', 1, 'Left'),
+    ])
+
+    expect(rows.map((row) => row.name)).toEqual(['A', 'B'])
+    expect(rows[0].blocks.flat().map((s) => s.seatNumber)).toEqual([1, 4, 5])
+  })
+
+  it('starts a new block where the section changes', () => {
+    const rows = groupByRow([
+      hallSeat(1, 'A', 4, 'Centre'),
+      hallSeat(2, 'A', 5, 'Centre'),
+      hallSeat(3, 'A', 3, 'Left'),
+      hallSeat(4, 'A', 8, 'Right'),
+    ])
+
+    expect(rows[0].blocks.map((block) => block.map((s) => s.seatNumber))).toEqual([[3], [4, 5], [8]])
+  })
+})
+
+describe('seatLabel', () => {
+  it('names a seat by its row and its number', () => {
+    expect(seatLabel({ row: 'C', seatNumber: 7 })).toBe('C7')
   })
 })
 

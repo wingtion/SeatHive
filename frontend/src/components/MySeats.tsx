@@ -19,7 +19,7 @@ interface MySeatsProps {
 export function MySeats({ signedIn, bookings, now, busyBookings, errors, lastEvents, onConfirm, onRelease }: MySeatsProps) {
   return (
     <section aria-labelledby="my-seats-heading" className="flex flex-col gap-4">
-      <h2 id="my-seats-heading" tabIndex={-1} className="scroll-mt-6 text-lg font-semibold">
+      <h2 id="my-seats-heading" className="text-lg font-semibold">
         Your seats
       </h2>
 

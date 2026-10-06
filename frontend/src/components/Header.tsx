@@ -34,7 +34,7 @@ export function Header() {
         </p>
 
         {session ? (
-          <div className="flex items-center gap-4">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-4 gap-y-2">
             <SourceLink />
             <p className="flex min-w-0 items-center gap-2 text-sm">
               <span className="truncate">

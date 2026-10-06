@@ -10,6 +10,7 @@ import type { LiveStatus } from '../live/seatHub'
 import { Button } from './Button'
 import { Hood } from './Hood'
 import { MySeats } from './MySeats'
+import { SeatDefs } from './SeatGlyph'
 import { SeatGrid } from './SeatGrid'
 import { SeatMark } from './SeatMark'
 
@@ -71,6 +72,7 @@ export function EventBoard() {
 
   return (
     <div className="flex flex-col gap-8">
+      <SeatDefs />
       {board.notice && (
         <div role="status" className="flex items-start justify-between gap-4 border-l-2 border-ink bg-surface py-3 pr-3 pl-4">
           <p className="text-sm">{board.notice}</p>
@@ -163,13 +165,12 @@ export function EventBoard() {
 // so "Held" and "Booked" are the seats of others, as their marks say, and the four numbers add up.
 function Legend({ seats, mine }: { seats: Seat[]; mine: Map<number, Booking> }) {
   const counts = countSeats(seats, mine)
-  // The mark of "Yours" is the one on the map: amber while a seat is still held, booked once all are paid for.
-  const holding = [...mine.values()].some((booking) => booking.status !== 'confirmed')
-  const entries: { view: SeatView; label: string; value: number }[] = [
-    { view: 'available', label: 'Available', value: counts.available },
-    { view: 'heldByOther', label: 'Held', value: counts.heldByOthers },
-    { view: 'booked', label: 'Booked', value: counts.bookedByOthers },
-    { view: holding || mine.size === 0 ? 'mineHeld' : 'mineBooked', label: 'Yours', value: counts.yours },
+  // "Yours" carries both marks a seat of your own can have on the map: held, and booked.
+  const entries: { views: SeatView[]; label: string; value: number }[] = [
+    { views: ['available'], label: 'Available', value: counts.available },
+    { views: ['heldByOther'], label: 'Held', value: counts.heldByOthers },
+    { views: ['booked'], label: 'Booked', value: counts.bookedByOthers },
+    { views: ['mineHeld', 'mineBooked'], label: 'Yours', value: counts.yours },
   ]
 
   return (
@@ -177,7 +178,11 @@ function Legend({ seats, mine }: { seats: Seat[]; mine: Map<number, Booking> }) 
       {entries.map((entry) => (
         <div key={entry.label} className="flex flex-col gap-1 px-3 py-3 first:pl-0">
           <dt className="flex items-center gap-2 text-sm text-ink-muted">
-            <SeatMark view={entry.view} />
+            <span className="flex gap-0.5">
+              {entry.views.map((view) => (
+                <SeatMark key={view} view={view} />
+              ))}
+            </span>
             {entry.label}
           </dt>
           <dd className="font-mono text-xl font-medium tabular-nums">{entry.value}</dd>
