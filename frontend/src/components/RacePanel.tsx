@@ -30,10 +30,14 @@ interface RacePanelProps {
   error: string | null
   now: number
   onStart: (racers: number) => void
+  // Entering as a guest, offered here to someone who is not signed in.
+  entering: boolean
+  enterError: string | null
+  onEnter: () => void
 }
 
 // The race simulation: many racers, one seat, one moment. What comes back is the API's own report.
-export function RacePanel({ signedIn, seats, race, running, error, now, onStart }: RacePanelProps) {
+export function RacePanel({ signedIn, seats, race, running, error, now, onStart, entering, enterError, onEnter }: RacePanelProps) {
   const racersId = useId()
   const [racers, setRacers] = useState(String(DEFAULT_RACERS))
   const count = Number(racers)
@@ -87,7 +91,18 @@ export function RacePanel({ signedIn, seats, race, running, error, now, onStart 
           )}
         </form>
       ) : (
-        <p className="text-sm text-ink-muted">Enter as a guest to start a race.</p>
+        // The one place the page asks for it: a race is the first thing to try, and it needs a guest.
+        <div className="flex flex-col items-start gap-3">
+          <p className="text-sm">A race needs a guest. Entering takes one click and no account.</p>
+          <Button variant="primary" disabled={entering} onClick={onEnter}>
+            {entering ? 'Entering' : 'Continue as guest'}
+          </Button>
+          {enterError && (
+            <p role="alert" className="text-sm text-danger">
+              {enterError}
+            </p>
+          )}
+        </div>
       )}
 
       {error && (
