@@ -1,0 +1,21 @@
+# Netlify builds the front end only; it lives in frontend/. The API is not on Netlify: it runs from the compose
+# files on a server (see Deployment Notes in the README).
+#
+# Set VITE_API_BASE_URL in the site's environment variables on Netlify: the API's HTTPS origin, for example
+# https://api.seathive.example, without a trailing "/". It is read when the site is built, so a change needs a new
+# deploy. The API must name this site's origin in CORS_ALLOWED_ORIGIN.
+#
+# There is no redirect rule: the front end is one page without routes of its own.
+
+[build]
+  base = "frontend"
+  command = "npm run build"
+  # Relative to base: frontend/dist.
+  publish = "dist"
+  # Run from base. Exit code 0 skips the build: a commit that changes nothing under frontend/ and not this file
+  # does not need a new deploy.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- . ../netlify.toml"
+
+[build.environment]
+  # Vite 8 needs Node 20.19, or 22.12 or newer; CI builds with 22 too.
+  NODE_VERSION = "22"

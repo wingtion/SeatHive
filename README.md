@@ -2,17 +2,22 @@
 
 [![CI](https://github.com/wingtion/SeatHive/actions/workflows/ci.yml/badge.svg)](https://github.com/wingtion/SeatHive/actions/workflows/ci.yml)
 
-SeatHive is a .NET backend for booking event seats. Its main job is to make sure that when many requests try to book the same seat at the same time, exactly one of them gets it.
+SeatHive is a .NET backend for booking event seats. Its main job is to make sure that when many requests try to book the same seat at the same time, exactly one of them gets it. A front end shows that happening: a seat map to book on, and beside it what the backend did.
 
 This is a portfolio project. It is not deployed anywhere yet; see the [Roadmap](#roadmap) for what is still missing.
 
+![A recording of the SeatHive front end: a guest holds a seat and pays for it, the events of the booking arrive one by one, then 20 racers ask for one seat at the same moment and 1 of them gets it.](docs/images/seathive-demo.gif)
+
+The recording (36 seconds, [also as a video](docs/images/seathive-demo.mp4)) is the front end running against the containers on one machine: a seat is held and paid for, then a race is started.
+
 ## Architecture
 
-Two services and a shared contract library:
+Two services, a shared contract library and a front end:
 
 *   **API Service:** Handles HTTP requests, authentication and the booking logic. It also consumes the payment results.
 *   **Worker Service:** Simulates what happens outside the booking system: the payment, the refund and the notification. Nothing real happens there: no money moves and no email is sent, and its log lines and events say so.
 *   **Shared Library:** Contains the event contracts used by both services.
+*   **Front End:** A single page (`frontend/`) that talks to the API over HTTP and listens to its SignalR hub. It shows only what the API reports; see [The Front End](#the-front-end).
 
 ## Key Features
 
@@ -79,6 +84,27 @@ Two services and a shared contract library:
 *   **Configuration:** Secrets (JWT key, database, Redis and RabbitMQ credentials) are not in the repository. The API and the Worker do not start if one is missing.
 *   **Containerization:** **Docker Compose** runs the API, Worker, Postgres, Redis and RabbitMQ, and on a server Caddy as the HTTPS reverse proxy in front of the API. The API and the Worker each apply their own database migrations when they start.
 
+## The Front End
+
+One page with two halves: the booking on the left, and on the right what the backend did about it.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/seathive-dark.png">
+  <img src="docs/images/seathive-light.png" alt="The SeatHive front end: the seat map of a theatre hall on the left; on the right the report of a race in which 1 of 20 racers got the seat, the holds counting down, and the events of a booking from the hold to the notification.">
+</picture>
+
+*   **Entering:** one click makes a guest (`POST /api/auth/guest`); signing in or registering with an email is possible too. Without a token the page shows the seats as they were when it loaded and does not change by itself; a free seat that is clicked then asks for the guest entry.
+*   **The seat map:** the hall is drawn from the section, row and number of each seat: rows in arcs around a stage, an aisle between the sections. Only the bend of the rows and the shape of the stage are not data. The six kinds of seat (available, held by someone else, booked, held by you, your payment under way, booked by you) differ in fill and outline, not in colour alone. The map is one tab stop and is moved through with the arrow keys.
+*   **Your seats:** hold, confirm or release, with the time a hold has left counted down from the `expiresAt` the API answered. A switch makes the next payment fail, which is the API's own `simulatePaymentFailure`.
+*   **Race for one seat:** starts the race of the [Concurrency Simulation](#concurrency-simulation) and shows the API's report: how many racers got the seat, each racer as won, stopped at the lock or refused by the database, and every attempt in a table. A race started by someone else appears too (`raceFinished`).
+*   **Holds running out:** the held seats with the time until each is let go, the next six listed and the rest counted.
+*   **What happened to your booking:** the history of one of your four newest bookings, kept current by `bookingEvent`, with the time between two events; what the Worker only simulates is tagged `simulated`.
+*   **Admin:** an admin sees a button that resets the demo data, behind a confirmation.
+
+The page follows the light or dark theme of the system. The API's error codes are turned into sentences, and a refusal is worded as an answer, not as a fault: being turned away from a seat is the system working.
+
+What it does not have: more than one event (it shows the first one the API lists) and a way to choose the seat of a race (it takes the first free one).
+
 ## Event Flow
 
 ```mermaid
@@ -124,6 +150,7 @@ The API also consumes the booking events itself, on three queues of its own: `bo
 *   **xUnit, Moq & Testcontainers**
 *   **Docker & Docker Compose**
 *   **Caddy 2.11** (reverse proxy, HTTPS)
+*   **Front end:** React 19, TypeScript, Vite 8, Tailwind CSS 4, the SignalR client, Vitest and oxlint
 
 ## How to Run
 
@@ -154,6 +181,14 @@ The API also consumes the booking events itself, on three queues of its own: `bo
 4.  **Access Swagger:**
     Navigate to `http://localhost:8080/swagger`. Swagger is only enabled in the Development environment, so it is there with `docker compose up` on your machine and not on a server started with the main file only.
 
+5.  **Start the front end** (Node 20.19, or 22.12 or newer):
+    ```bash
+    cd frontend
+    npm install
+    npm run dev
+    ```
+    Open `http://localhost:5173`. The dev server forwards `/api` and `/hubs` to the API on `http://localhost:8080` (another address: set `SEATHIVE_API` before `npm run dev`). The page needs an event: if it says "No event yet", create the demo data once (see Using the API, step 4).
+
 ## Using the API
 
 1.  **Register:** `POST /api/auth/register`
@@ -179,7 +214,16 @@ Settings:
 
 ## Deployment Notes
 
-Nothing is deployed yet. The main compose file is ready for a server; what it already takes care of:
+Nothing is deployed yet. The back end and the front end are deployed apart: the back end from the compose files on a server, the front end as a static site.
+
+**The front end** is built by `npm run build` into `frontend/dist`. `netlify.toml` tells Netlify to build that directory with Node 22, and to skip a build when a commit changed nothing under `frontend/`. Two settings connect it to the API:
+
+*   `VITE_API_BASE_URL`, set where the site is built: the API's HTTPS origin, without a trailing `/`. It is read at build time; without it the page calls its own origin, which only works behind the dev server's proxy.
+*   `CORS_ALLOWED_ORIGIN` on the server: the site's origin (see below).
+
+`netlify.toml` has not been used for a deploy yet. The build command is the one CI runs, and the skip rule was checked against this repository's history (a front end commit builds, a back end commit does not).
+
+**The back end:** the main compose file is ready for a server; what it already takes care of:
 
 *   **HTTPS through Caddy** (`caddy/Caddyfile`). Caddy terminates TLS (certificates from Let's Encrypt, renewed by itself), redirects HTTP to HTTPS, serves HTTP/3, and forwards everything to the API, WebSockets included. It forwards to the API only.
 *   **Only Caddy is reachable.** On a server only ports 80 and 443 are published. The API, Postgres, Redis and RabbitMQ, its management UI (15672) included, publish nothing and are reachable from inside the compose network only. A test reads the compose files the way Docker Compose does and checks this.
@@ -226,7 +270,18 @@ dotnet test --filter "Category=Api"           # the API in-process, over HTTP
 dotnet test --filter "Category=E2E"           # the API and the Worker's consumers together
 ```
 
-There are no unit tests: every test needs Docker.
+The back end has no unit tests: every test of it needs Docker.
+
+The front end has its own tests, which need neither Docker nor a browser:
+
+```bash
+cd frontend
+npm test        # Vitest
+npm run lint    # oxlint
+npm run build   # type-checks, then builds
+```
+
+They cover the logic outside the components: the API client (the token, the API's error codes, a request without an answer), the saved session and when it is forgotten, how the map and the bookings follow the hub's messages, where each seat stands in the hall, and how the race report and the timeline are put together. No test renders a component or drives a browser; the page itself was checked by hand against the running containers. CI runs the three commands above next to the back end's tests.
 
 The tests run on xUnit v3 through VSTest, and the package is `xunit.v3.mtp-off` on purpose: plain `xunit.v3` 4.x brings in Microsoft Testing Platform, which makes `dotnet test` fail in VSTest mode on the .NET 10 SDK.
 
@@ -263,7 +318,8 @@ Done:
 *   [x] Live updates with SignalR.
 *   [x] CORS for a browser front end.
 *   [x] A race simulation with real racers, a report of every attempt and a live broadcast.
+*   [x] A front end: the seat map, the booking flow, the race, the holds and the event timeline.
 
 Not implemented yet:
 
-*   [ ] A hosted live demo. The compose files and the reverse proxy are ready; a server, a domain and the front end are not (see the deployment notes).
+*   [ ] A hosted live demo. The compose files, the reverse proxy and the front end's build configuration are ready; a server and a domain are not (see the deployment notes).

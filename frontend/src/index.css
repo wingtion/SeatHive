@@ -1,0 +1,230 @@
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/700.css';
+@import 'tailwindcss';
+
+/*
+  Design tokens. One accent: amber, and it means one thing only: "held / locked".
+  Two signal colours beside it, each with one meaning too: green for "the live connection is up", red for a real failure.
+  Contrast (WCAG) of each pair is noted where it matters; text needs 4.5:1, shapes and borders 3:1.
+*/
+:root {
+  color-scheme: light dark;
+
+  --bg: #f3f4f6;
+  --surface: #fbfbfc;
+  --ink: #15181d; /* 16.2:1 on bg */
+  --ink-muted: #565c68; /* 6.1:1 on bg */
+  --line: #d3d7de; /* dividers between content, not the only cue for anything */
+  --line-strong: #7d8490; /* 3.5:1 on bg: outlines of controls and of free seats */
+
+  --hold: #f2a11b; /* the amber fill. 1.9:1 on bg, so a filled shape also gets a --hold-text border */
+  --hold-ink: #15181d; /* text on the amber fill, 8.4:1 */
+  --hold-text: #9a4d00; /* amber as text or border on the light theme, 5.6:1 on bg */
+
+  --live: #15803d; /* green, for one thing only: the live connection is up. 4.6:1 on bg */
+
+  --danger: #b3261e; /* real failures only, 5.9:1 on bg. A lost race is not a failure. */
+
+  /* The seat map. */
+  --stage: #e2e5e9; /* the platform of the stage: a shade of the page, not a box with an outline */
+  --seat-hover: #e2e5e9;
+  --seat-amber-line: #9a4d00; /* amber as the outline and the hatch of a held seat, 5.6:1 on bg */
+  --seat-booked-detail: #3d424a; /* the lines of a seat on the ink fill of a booked one */
+  --seat-booked-num: #8b919a; /* the number of a seat someone else booked, 5.6:1 on ink */
+  --seat-mine-booked-num: #f2a11b; /* the number of a seat you booked, 8.4:1 on ink */
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101216;
+    --surface: #181b21;
+    --ink: #e8eaee; /* 15.6:1 on bg */
+    --ink-muted: #9ba2ae; /* 7.3:1 on bg */
+    --line: #2b2f38;
+    --line-strong: #6b7280; /* 3.9:1 on bg */
+
+    --hold: #f2a11b; /* 8.8:1 on bg */
+    --hold-ink: #15181d;
+    --hold-text: #f5b041; /* 10:1 on bg */
+
+    --live: #4ade80; /* 11:1 on bg */
+
+    --danger: #ff8a80; /* 8.2:1 on bg */
+
+    --stage: #1e2127;
+    --seat-hover: #262a31;
+    --seat-amber-line: #f2a11b; /* 8.8:1 on bg */
+    --seat-booked-detail: #b4b9c0;
+    --seat-booked-num: #5d636c; /* 5.1:1 on ink */
+    --seat-mine-booked-num: #101216;
+  }
+}
+
+@theme inline {
+  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-muted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-hold: var(--hold);
+  --color-hold-ink: var(--hold-ink);
+  --color-hold-text: var(--hold-text);
+  --color-live: var(--live);
+  --color-danger: var(--danger);
+
+  /* One corner scale: seats 2px, controls and panels 4px. Nothing is rounder. */
+  --radius-seat: 2px;
+  --radius-control: 4px;
+}
+
+/*
+  A seat of the map and its mark in the legend: one drawing (SeatGlyph), filled and outlined by its kind. The kinds
+  differ in fill and outline, not in colour alone: free is an outline, someone else's hold is hatched (the hatch is
+  set where the seat is drawn), your own hold is solid amber, its payment under way has a dashed edge, booked is
+  solid ink, and your own booked seat keeps the ink and gets a thick amber frame.
+*/
+@layer components {
+  .seat {
+    --seat-fill: var(--bg);
+    --seat-line: var(--ink);
+    --seat-line-width: 1.25px;
+    --seat-dash: none;
+    --seat-detail: var(--ink);
+    --seat-detail-opacity: 0.5;
+    --seat-num: var(--ink);
+    --seat-num-weight: 500;
+  }
+
+  .seat[data-view='heldByOther'] {
+    --seat-line: var(--seat-amber-line);
+    --seat-detail: var(--seat-amber-line);
+    --seat-detail-opacity: 0.7;
+  }
+
+  .seat[data-view='booked'] {
+    --seat-fill: var(--ink);
+    --seat-detail: var(--seat-booked-detail);
+    --seat-detail-opacity: 1;
+    --seat-num: var(--seat-booked-num);
+    --seat-num-weight: 400;
+  }
+
+  .seat[data-view='mineHeld'],
+  .seat[data-view='minePaying'] {
+    --seat-fill: var(--hold);
+    --seat-line: var(--seat-amber-line);
+    --seat-detail: var(--hold-ink);
+    --seat-detail-opacity: 0.35;
+    --seat-num: var(--hold-ink);
+    --seat-num-weight: 700;
+  }
+
+  .seat[data-view='minePaying'] {
+    --seat-line: var(--ink);
+    --seat-line-width: 1.5px;
+    --seat-dash: 2.5 1.75;
+  }
+
+  .seat[data-view='mineBooked'] {
+    --seat-fill: var(--ink);
+    --seat-line: var(--hold);
+    --seat-line-width: 2.75px;
+    --seat-detail: var(--seat-booked-detail);
+    --seat-detail-opacity: 1;
+    --seat-num: var(--seat-mine-booked-num);
+    --seat-num-weight: 700;
+  }
+
+  /* Only a free seat answers the pointer. */
+  button.seat[data-view='available']:hover {
+    --seat-fill: var(--seat-hover);
+    --seat-line-width: 2px;
+    --seat-detail-opacity: 0.8;
+  }
+
+  /* At the size of the legend the lines are thinner; the amber frame stays thick enough to be seen. */
+  .seat-mark {
+    --seat-line-width: 1px;
+    --seat-detail-width: 0.6px;
+  }
+
+  .seat-mark[data-view='mineBooked'] {
+    --seat-line-width: 2.5px;
+  }
+
+  .seat-outline {
+    fill: var(--seat-fill);
+    stroke: var(--seat-line);
+    stroke-width: var(--seat-line-width);
+    stroke-dasharray: var(--seat-dash);
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
+    transition:
+      fill 150ms,
+      stroke 150ms;
+  }
+
+  .seat-detail {
+    fill: none;
+    stroke: var(--seat-detail);
+    stroke-opacity: var(--seat-detail-opacity);
+    stroke-width: var(--seat-detail-width, 0.75px);
+    vector-effect: non-scaling-stroke;
+    transition: stroke 150ms;
+  }
+
+  .seat-num {
+    color: var(--seat-num);
+    font-weight: var(--seat-num-weight);
+    transition: color 150ms;
+  }
+
+  /* The number of a hatched seat stands on a rim of the page colour, so the hatch does not run through it. */
+  .seat[data-view='heldByOther'] .seat-num {
+    -webkit-text-stroke: 3px var(--bg);
+    paint-order: stroke fill;
+  }
+}
+
+@layer base {
+  html {
+    background: var(--bg);
+    /* The page keeps its width when a scrollbar comes or goes. */
+    scrollbar-gutter: stable;
+    color: var(--ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    min-height: 100dvh;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--hold);
+    color: var(--hold-ink);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+}
