@@ -154,7 +154,7 @@ export function EventBoard() {
         </div>
 
         <aside className="lg:border-l lg:border-line lg:pl-16">
-          <Hood board={board} session={session} mine={mine} now={now} />
+          <Hood board={board} session={session} mine={mine} now={now} entering={entering} enterError={enterError} onEnter={() => void enter()} />
         </aside>
       </div>
     </div>
@@ -206,7 +206,7 @@ function Live({ status, signedIn }: { status: LiveStatus; signedIn: boolean }) {
       {/* Green, and only here: it says the connection is up. Not live is an empty ring, so colour is not the only cue. */}
       <span aria-hidden className={`size-2 rounded-full ${status === 'live' ? 'bg-live' : 'border border-line-strong'}`} />
       <span className={status === 'live' ? 'font-medium text-live' : ''}>{liveText[status]}</span>
-      {!signedIn && <span>(a snapshot; enter as a guest for live updates)</span>}
+      {!signedIn && <span>(a snapshot of the seats)</span>}
     </p>
   )
 }

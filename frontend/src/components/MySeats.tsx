@@ -27,7 +27,7 @@ export function MySeats({ signedIn, bookings, now, busyBookings, errors, lastEve
         <p className="text-sm text-ink-muted">
           {signedIn
             ? 'Pick a free seat on the map. It is held for you for a few minutes, until you confirm or release it.'
-            : 'Enter as a guest to hold a seat and to see the map change live.'}
+            : 'The seats you hold or have booked appear here.'}
         </p>
       ) : (
         <ul className="flex flex-col divide-y divide-line border-y border-line">

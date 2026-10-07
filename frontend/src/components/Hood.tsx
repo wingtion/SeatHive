@@ -13,10 +13,14 @@ interface HoodProps {
   // The person's active bookings by seat.
   mine: Map<number, Booking>
   now: number
+  // Entering as a guest, for someone who is not signed in: the race is where the page asks for it.
+  entering: boolean
+  enterError: string | null
+  onEnter: () => void
 }
 
 // The hood: beside the booking, the evidence of why it was safe. Everything here is what the API reported.
-export function Hood({ board, session, mine, now }: HoodProps) {
+export function Hood({ board, session, mine, now, entering, enterError, onEnter }: HoodProps) {
   return (
     <section aria-labelledby="hood-heading" className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
@@ -37,6 +41,9 @@ export function Hood({ board, session, mine, now }: HoodProps) {
         error={board.raceError}
         now={now}
         onStart={(racers) => void board.startRace(racers)}
+        entering={entering}
+        enterError={enterError}
+        onEnter={onEnter}
       />
 
       <div className="border-t border-line pt-8">

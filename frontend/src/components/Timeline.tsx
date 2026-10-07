@@ -52,7 +52,7 @@ export function Timeline({ token, bookings, liveEvents, resyncs }: TimelineProps
       </div>
 
       {token === null ? (
-        <p className="text-sm text-ink-muted">Enter as a guest and hold a seat to see its events arrive.</p>
+        <p className="text-sm text-ink-muted">The events of a seat you hold appear here as they arrive.</p>
       ) : chosen === null ? (
         <p className="text-sm text-ink-muted">Hold a seat on the map. Its events appear here as they arrive.</p>
       ) : (
